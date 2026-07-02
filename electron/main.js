@@ -1,4 +1,5 @@
 const { app, BrowserWindow, ipcMain } = require('electron')
+const fs = require('fs')
 const os = require('os')
 const path = require('path')
 const PearRuntime = require('pear-runtime')
@@ -7,6 +8,8 @@ const FramedStream = require('framed-stream')
 const { isMac, isLinux, isWindows } = require('which-runtime')
 const { command, flag } = require('paparam')
 const pkg = require('../package.json')
+const { PearOpsPeer } = require('../src/peer')
+const { createKeetIdentity, identityStatus } = require('../src/identity')
 const { name, productName, version, upgrade } = pkg
 
 const protocol = name
@@ -46,6 +49,186 @@ function sendToAll(name, data) {
     if (!win.isDestroyed()) win.webContents.send(name, data)
   }
 }
+
+const pearOpsService = {
+  started: false,
+  appStorage: null,
+  stateFile: null,
+  identityStorage: null,
+  localState: null,
+  identitySnapshot: null,
+  peer: null,
+  activeIncidentId: null
+}
+
+function loadLocalState () {
+  try { return JSON.parse(fs.readFileSync(pearOpsService.stateFile, 'utf8')) } catch { return { incidents: [], settings: { displayName: 'Responder', compact: true, notifications: true } } }
+}
+
+function saveLocalState () {
+  fs.mkdirSync(pearOpsService.appStorage, { recursive: true })
+  fs.writeFileSync(pearOpsService.stateFile, JSON.stringify(pearOpsService.localState, null, 2))
+}
+
+function pearOpsSnapshot () {
+  return {
+    incidents: pearOpsService.localState?.incidents || [],
+    activeIncidentId: pearOpsService.activeIncidentId,
+    active: pearOpsService.peer ? pearOpsService.peer.snapshot() : null,
+    identity: pearOpsService.identitySnapshot || { configured: false },
+    settings: pearOpsService.localState?.settings || {},
+    app: { version, storage: pearOpsService.appStorage }
+  }
+}
+
+function sendPearOpsState () {
+  sendToAll('pear:worker:ipc:' + mainWorkerSpecifier, Buffer.from(JSON.stringify({ type: 'state', state: pearOpsSnapshot() })))
+}
+
+async function refreshPearOpsIdentity () {
+  pearOpsService.identitySnapshot = await identityStatus(pearOpsService.identityStorage).catch(err => ({
+    configured: false,
+    mnemonicPath: path.join(pearOpsService.identityStorage, 'identity-mnemonic.txt'),
+    error: err.message
+  }))
+  return pearOpsService.identitySnapshot
+}
+
+function ensurePearOpsIdentity () {
+  if (!pearOpsService.identitySnapshot?.configured) throw new Error('Set up or restore your Keet identity before joining incidents')
+}
+
+function upsertPearOpsIncident (record) {
+  const incidents = pearOpsService.localState.incidents
+  const idx = incidents.findIndex(i => i.id === record.id || i.roomKey === record.roomKey)
+  if (idx === -1) incidents.unshift(record)
+  else incidents[idx] = { ...incidents[idx], ...record }
+  pearOpsService.activeIncidentId = record.id
+  pearOpsService.localState.activeIncidentId = record.id
+  saveLocalState()
+}
+
+function syncPearOpsActiveMetadata () {
+  if (!pearOpsService.peer || !pearOpsService.activeIncidentId) return
+  const snap = pearOpsService.peer.snapshot()
+  const meta = snap.metadata || {}
+  upsertPearOpsIncident({
+    id: pearOpsService.activeIncidentId,
+    roomKey: snap.roomKey,
+    title: meta.title || 'Untitled incident',
+    severity: meta.severity || 'SEV2',
+    status: meta.status || 'investigating',
+    updatedAt: snap.timeline.at(-1)?.timestamp || new Date().toISOString(),
+    joinedAt: pearOpsService.localState.incidents.find(i => i.id === pearOpsService.activeIncidentId)?.joinedAt || new Date().toISOString()
+  })
+}
+
+function incidentStorage (incidentId) {
+  return path.join(pearOpsService.appStorage, 'incidents', incidentId)
+}
+
+function wirePearOpsPeer (peer) {
+  peer.on('snapshot', () => { syncPearOpsActiveMetadata(); sendPearOpsState() })
+  peer.on('event', () => { syncPearOpsActiveMetadata(); sendPearOpsState() })
+  peer.on('peers', sendPearOpsState)
+}
+
+async function openPearOpsIncident (incident) {
+  if (pearOpsService.peer) await pearOpsService.peer.close().catch(() => {})
+  pearOpsService.peer = new PearOpsPeer({
+    name: pearOpsService.localState.settings?.displayName || 'Responder',
+    storage: incidentStorage(incident.id),
+    identityStorage: pearOpsService.identityStorage
+  })
+  wirePearOpsPeer(pearOpsService.peer)
+  await pearOpsService.peer.joinRoom({ roomKey: incident.roomKey })
+  pearOpsService.activeIncidentId = incident.id
+  pearOpsService.localState.activeIncidentId = incident.id
+  syncPearOpsActiveMetadata()
+  sendPearOpsState()
+}
+
+async function handlePearOpsMethod (method, params = {}) {
+  if (method === 'getState') return pearOpsSnapshot()
+  if (method === 'setupIdentity') {
+    const bundle = await createKeetIdentity(pearOpsService.identityStorage, { mnemonic: params.mnemonic })
+    await refreshPearOpsIdentity()
+    return { ...pearOpsSnapshot(), generatedMnemonic: params.mnemonic ? null : bundle.mnemonic }
+  }
+  if (method === 'createIncident') {
+    ensurePearOpsIdentity()
+    const id = `inc-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    if (pearOpsService.peer) await pearOpsService.peer.close().catch(() => {})
+    pearOpsService.peer = new PearOpsPeer({ name: pearOpsService.localState.settings?.displayName || 'Responder', storage: incidentStorage(id), identityStorage: pearOpsService.identityStorage })
+    wirePearOpsPeer(pearOpsService.peer)
+    const snap = await pearOpsService.peer.createRoom({ title: params.title, severity: params.severity, status: params.status || 'investigating' })
+    upsertPearOpsIncident({ id, roomKey: snap.roomKey, title: snap.metadata.title, severity: snap.metadata.severity, status: snap.metadata.status, joinedAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+    sendPearOpsState()
+    return pearOpsSnapshot()
+  }
+  if (method === 'joinIncident') {
+    ensurePearOpsIdentity()
+    const id = `inc-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    const record = { id, roomKey: params.roomKey, title: params.title || 'Joined incident', severity: params.severity || 'SEV2', status: 'joined', joinedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
+    upsertPearOpsIncident(record)
+    await openPearOpsIncident(record)
+    return pearOpsSnapshot()
+  }
+  if (method === 'selectIncident') {
+    const incident = pearOpsService.localState.incidents.find(i => i.id === params.id)
+    if (!incident) throw new Error('incident not found')
+    await openPearOpsIncident(incident)
+    return pearOpsSnapshot()
+  }
+  if (method === 'removeIncident') {
+    pearOpsService.localState.incidents = pearOpsService.localState.incidents.filter(i => i.id !== params.id)
+    if (pearOpsService.activeIncidentId === params.id) {
+      pearOpsService.activeIncidentId = null
+      pearOpsService.localState.activeIncidentId = null
+      if (pearOpsService.peer) await pearOpsService.peer.close().catch(() => {})
+      pearOpsService.peer = null
+    }
+    saveLocalState(); sendPearOpsState(); return pearOpsSnapshot()
+  }
+  if (method === 'postEvent') return pearOpsService.peer.postEvent(params)
+  if (method === 'setStatus') return pearOpsService.peer.setStatus(params.status)
+  if (method === 'saveSettings') {
+    pearOpsService.localState.settings = { ...(pearOpsService.localState.settings || {}), ...params }
+    saveLocalState(); sendPearOpsState(); return pearOpsSnapshot()
+  }
+  throw new Error(`unknown method ${method}`)
+}
+
+async function startPearOpsService () {
+  if (pearOpsService.started) return pearOpsSnapshot()
+  pearOpsService.started = true
+  pearOpsService.appStorage = app.getPath('userData')
+  pearOpsService.stateFile = path.join(pearOpsService.appStorage, 'pearops-state.json')
+  pearOpsService.identityStorage = path.join(pearOpsService.appStorage, 'identity')
+  pearOpsService.localState = loadLocalState()
+  pearOpsService.activeIncidentId = pearOpsService.localState.activeIncidentId || null
+  await refreshPearOpsIdentity()
+  sendToAll('pear:worker:ipc:' + mainWorkerSpecifier, Buffer.from(JSON.stringify({ type: 'ready', state: pearOpsSnapshot() })))
+  return pearOpsSnapshot()
+}
+
+async function handlePearOpsRPC (data) {
+  await startPearOpsService()
+  let msg
+  try { msg = JSON.parse(Buffer.isBuffer(data) ? data.toString() : String(data)) } catch { return false }
+  const { id, method, params = {} } = msg
+  try {
+    const result = await handlePearOpsMethod(method, params)
+    sendToAll('pear:worker:ipc:' + mainWorkerSpecifier, Buffer.from(JSON.stringify({ type: 'response', id, result })))
+  } catch (err) {
+    sendToAll('pear:worker:ipc:' + mainWorkerSpecifier, Buffer.from(JSON.stringify({ type: 'response', id, error: err.message })))
+  }
+  return true
+}
+
+app.on('before-quit', () => {
+  if (pearOpsService.peer) pearOpsService.peer.close().catch(() => {})
+})
 
 function getWorker(specifier) {
   if (workers.has(specifier)) return workers.get(specifier)
@@ -138,26 +321,17 @@ async function createWindow() {
   await win.loadFile(path.join(__dirname, '..', 'renderer', 'dist', 'index.html'))
 }
 
-ipcMain.handle('pear:applyUpdate', () => {
-  const pipe = getWorker(mainWorkerSpecifier)
-
-  return new Promise((resolve, reject) => {
-    function onData(data) {
-      const message = data.toString()
-
-      if (message === 'pear:updateApplied') {
-        pipe.removeListener('data', onData)
-        resolve()
-      }
-    }
-
-    pipe.on('data', onData)
-    pipe.write('pear:applyUpdate')
-  })
-})
-ipcMain.handle('pear:startWorker', (evt, filename) => {
+ipcMain.handle('pear:applyUpdate', () => false)
+ipcMain.handle('pear:startWorker', async (evt, filename) => {
+  if (filename === mainWorkerSpecifier) {
+    await startPearOpsService()
+    return true
+  }
   getWorker(filename)
   return true
+})
+ipcMain.handle('pear:worker:writeIPC:' + mainWorkerSpecifier, async (evt, data) => {
+  return handlePearOpsRPC(data)
 })
 ipcMain.handle('app:afterUpdate', () => {
   if (isLinux && process.env.APPIMAGE) {
