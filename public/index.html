@@ -1,0 +1,78 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>PearOps</title>
+  <link rel="stylesheet" href="/styles.css">
+</head>
+<body>
+  <main>
+    <section id="home" class="panel hero">
+      <p class="eyebrow">PearOps</p>
+      <h1>Serverless incident war room</h1>
+      <p class="sub">Create a private P2P room, coordinate responders, replicate timeline updates, and share evidence files without Slack, Google Docs, or a backend.</p>
+      <div class="grid two">
+        <form id="createForm" class="card">
+          <h2>Create incident</h2>
+          <label>Title <input name="title" value="Checkout API outage"></label>
+          <label>Severity
+            <select name="severity"><option>SEV1</option><option selected>SEV2</option><option>SEV3</option></select>
+          </label>
+          <button>Create room</button>
+        </form>
+        <form id="joinForm" class="card">
+          <h2>Join incident</h2>
+          <label>Room key <input name="roomKey" placeholder="pearops:..." autocomplete="off"></label>
+          <button>Join room</button>
+        </form>
+      </div>
+    </section>
+
+    <section id="incident" class="hidden">
+      <div class="topbar panel">
+        <div>
+          <p class="eyebrow">Incident room</p>
+          <h1 id="title">Untitled incident</h1>
+          <div class="badges"><span id="severity"></span><span id="status"></span><span id="peers"></span></div>
+        </div>
+        <div class="roomkey">
+          <span>Room key</span>
+          <code id="roomKey"></code>
+          <button id="copyKey" type="button">Copy</button>
+        </div>
+      </div>
+
+      <div class="grid main-grid">
+        <section class="panel composer">
+          <form id="eventForm">
+            <label>Event type
+              <select name="eventType">
+                <option>update</option><option>investigation</option><option>mitigation</option><option>decision</option><option>resolution</option>
+              </select>
+            </label>
+            <label>Timeline update<textarea name="message" rows="4" placeholder="What changed? What did we learn?"></textarea></label>
+            <button>Post update</button>
+          </form>
+          <form id="attachForm" class="attach">
+            <label>Evidence file <input name="file" type="file"></label>
+            <button>Attach file</button>
+          </form>
+          <div class="status-actions">
+            <button data-status="investigating">Investigating</button>
+            <button data-status="mitigated">Mitigated</button>
+            <button data-status="resolved">Resolved</button>
+          </div>
+          <button id="exportBtn" class="secondary">Export Markdown report</button>
+        </section>
+        <section class="panel timeline-panel">
+          <div class="section-head"><h2>Timeline</h2><span id="eventCount">0 events</span></div>
+          <ol id="timeline" class="timeline"></ol>
+        </section>
+      </div>
+    </section>
+  </main>
+  <div id="toast"></div>
+  <script src="/app.js"></script>
+</body>
+</html>

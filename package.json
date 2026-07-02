@@ -1,0 +1,32 @@
+{
+  "name": "pearops",
+  "version": "0.1.0",
+  "description": "PearOps: local-first P2P incident war room for Pear Runtime / Hyperswarm demos",
+  "type": "commonjs",
+  "main": "src/server.js",
+  "scripts": {
+    "start": "node src/server.js",
+    "peer:a": "node src/server.js --name Peer-A --port 3911 --storage .pearops/peer-a",
+    "peer:b": "node src/server.js --name Peer-B --port 3912 --storage .pearops/peer-b",
+    "cli": "node src/cli.js",
+    "smoke": "node test/smoke.js"
+  },
+  "keywords": ["pear", "hyperswarm", "hypercore", "hyperdrive", "p2p", "incident"],
+  "license": "MIT",
+  "dependencies": {
+    "b4a": "^1.8.1",
+    "corestore": "^7.11.0",
+    "express": "^5.2.1",
+    "hypercore": "^11.33.5",
+    "hyperdrive": "^13.3.2",
+    "hyperswarm": "^4.17.0",
+    "multer": "^2.0.2",
+    "open": "^10.2.0",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "pear": {
+    "name": "PearOps",
+    "type": "terminal",
+    "main": "src/server.js"
+  }
+}
