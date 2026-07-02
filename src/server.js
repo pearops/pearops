@@ -7,7 +7,10 @@ const qrcode = require('qrcode-terminal')
 const { PearOpsPeer } = require('./peer')
 
 function arg (name, fallback) {
-  const idx = process.argv.indexOf(`--${name}`)
+  // npm appends arguments after the script's built-in flags, e.g.
+  // `npm run peer:a -- --port 3921` becomes `... --port 3911 ... --port 3921`.
+  // Use the last occurrence so demo-time overrides work as expected.
+  const idx = process.argv.lastIndexOf(`--${name}`)
   return idx >= 0 ? process.argv[idx + 1] : fallback
 }
 
