@@ -1,7 +1,7 @@
+out/
 node_modules/
+renderer/dist/
 .pearops/
-test-storage/
-pear-llms-full.txt
-npm-debug.log*
+*.log
 .DS_Store
-.env
+npm-debug.log*

@@ -6,6 +6,7 @@ const Corestore = require('corestore')
 const Hyperswarm = require('hyperswarm')
 const Hyperdrive = require('hyperdrive')
 const b4a = require('b4a')
+const { createKeetIdentity, proofToJSON } = require('./identity')
 
 function parseBlindPeerKeys (value) {
   if (!value) return []
@@ -66,6 +67,7 @@ class PearOpsPeer extends EventEmitter {
     this.blindPeering = null
     this.blindRegistered = new Set()
     this.blindRegistrationErrors = []
+    this.identityBundle = null
 
     // Pear/P2P-specific: a separate replication swarm is dedicated to Corestore.
     // Corestore owns the Hypercore/Hyperdrive protocol stream, while the control
@@ -90,6 +92,7 @@ class PearOpsPeer extends EventEmitter {
   }
 
   async joinRoom ({ roomKey, title, severity, status, create = false }) {
+    if (!this.identityBundle) this.identityBundle = await createKeetIdentity(path.join(this.storage, 'identity'))
     this.roomTopic = topicFromRoomKey(create ? null : roomKey)
     this.roomKey = roomKeyFromTopic(this.roomTopic)
     fs.mkdirSync(this.storage, { recursive: true })
@@ -173,15 +176,25 @@ class PearOpsPeer extends EventEmitter {
   }
 
   async _append (partial) {
+    const eventId = crypto.randomUUID()
+    const timestamp = new Date().toISOString()
+    const signedPayload = { id: eventId, timestamp, eventType: partial.eventType || partial.type || 'update', message: partial.message || '', attachment: partial.attachment || null, metadata: partial.metadata || null }
+    const proof = this.identityBundle ? proofToJSON(this.identityBundle.sign(signedPayload)) : null
     const event = {
-      id: crypto.randomUUID(),
+      id: eventId,
       author: this.name,
-      timestamp: new Date().toISOString(),
+      timestamp,
       eventType: partial.eventType || partial.type || 'update',
       message: partial.message || '',
       attachment: partial.attachment || null,
       metadata: partial.metadata || null,
-      writerKey: b4a.toString(this.writer.key, 'hex')
+      writerKey: b4a.toString(this.writer.key, 'hex'),
+      identity: this.identityBundle ? {
+        identityPublicKey: this.identityBundle.identityPublicKey,
+        devicePublicKey: this.identityBundle.devicePublicKey,
+        verified: true
+      } : null,
+      proof
     }
     await this.writer.append(event)
     this._ingest(event)
@@ -266,6 +279,10 @@ class PearOpsPeer extends EventEmitter {
     if (!event || !event.id || this.events.has(event.id)) return
     this.events.set(event.id, event)
     if (event.metadata) this.metadata = { ...(this.metadata || {}), ...event.metadata }
+    if (event.proof && event.identity?.identityPublicKey && this.identityBundle) {
+      const signedPayload = { id: event.id, timestamp: event.timestamp, eventType: event.eventType, message: event.message, attachment: event.attachment, metadata: event.metadata }
+      event.identity.verified = this.identityBundle.verify(event.proof, signedPayload, event.identity.identityPublicKey)
+    }
     if (event.attachment?.driveKey) this._addDrive(Buffer.from(event.attachment.driveKey, 'hex')).catch(() => {})
     this.emit('event', event)
     this.emit('snapshot', this.snapshot())
@@ -329,6 +346,7 @@ class PearOpsPeer extends EventEmitter {
       roomKey: this.roomKey,
       metadata: this.metadata,
       peerName: this.name,
+      identity: this.identityBundle ? { identityPublicKey: this.identityBundle.identityPublicKey, devicePublicKey: this.identityBundle.devicePublicKey } : null,
       peers: this.peerCount(),
       writers: [...this.knownWriters],
       drives: [...this.knownDrives],
