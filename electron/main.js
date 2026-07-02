@@ -63,8 +63,26 @@ const pearOpsService = {
   stateTimer: null
 }
 
+function defaultSettings () {
+  return {
+    displayName: 'Responder',
+    notifications: true,
+    compact: true,
+    theme: 'system',
+    defaultSeverity: 'SEV-2',
+    defaultEventType: 'update',
+    discoveryFlushTimeout: 250,
+    blindPeers: ''
+  }
+}
+
 function loadLocalState () {
-  try { return JSON.parse(fs.readFileSync(pearOpsService.stateFile, 'utf8')) } catch { return { incidents: [], settings: { displayName: 'Responder', compact: true, notifications: true } } }
+  try {
+    const state = JSON.parse(fs.readFileSync(pearOpsService.stateFile, 'utf8'))
+    return { ...state, settings: { ...defaultSettings(), ...(state.settings || {}) } }
+  } catch {
+    return { incidents: [], settings: defaultSettings() }
+  }
 }
 
 function saveLocalState () {
@@ -150,6 +168,17 @@ function wirePearOpsPeer (peer) {
   peer.on('peers', () => { if (peer === pearOpsService.peer) sendPearOpsState() })
 }
 
+function activePeerOptions (incidentId) {
+  const settings = pearOpsService.localState.settings || defaultSettings()
+  return {
+    name: settings.displayName || 'Responder',
+    storage: incidentStorage(incidentId),
+    identityStorage: pearOpsService.identityStorage,
+    discoveryFlushTimeout: Number(settings.discoveryFlushTimeout) || 250,
+    blindPeerKeys: settings.blindPeers || ''
+  }
+}
+
 async function openPearOpsIncident (incident) {
   if (pearOpsService.activeIncidentId === incident.id && pearOpsService.peer?.roomKey === incident.roomKey) return
   pearOpsService.activeIncidentId = incident.id
@@ -160,12 +189,7 @@ async function openPearOpsIncident (incident) {
   const previousPeer = pearOpsService.peer
   pearOpsService.peer = null
   if (previousPeer) await previousPeer.close().catch(() => {})
-  pearOpsService.peer = new PearOpsPeer({
-    name: pearOpsService.localState.settings?.displayName || 'Responder',
-    storage: incidentStorage(incident.id),
-    identityStorage: pearOpsService.identityStorage,
-    discoveryFlushTimeout: 250
-  })
+  pearOpsService.peer = new PearOpsPeer(activePeerOptions(incident.id))
   wirePearOpsPeer(pearOpsService.peer)
   pearOpsService.switching = false
   await pearOpsService.peer.joinRoom({ roomKey: incident.roomKey })
@@ -186,7 +210,7 @@ async function handlePearOpsMethod (method, params = {}) {
     if (pearOpsService.peer) await pearOpsService.peer.close().catch(() => {})
     pearOpsService.activeIncidentId = id
     pearOpsService.localState.activeIncidentId = id
-    pearOpsService.peer = new PearOpsPeer({ name: pearOpsService.localState.settings?.displayName || 'Responder', storage: incidentStorage(id), identityStorage: pearOpsService.identityStorage, discoveryFlushTimeout: 250 })
+    pearOpsService.peer = new PearOpsPeer(activePeerOptions(id))
     wirePearOpsPeer(pearOpsService.peer)
     const snap = await pearOpsService.peer.createRoom({ title: params.title, severity: params.severity, status: params.status || 'investigating' })
     upsertPearOpsIncident({ id, roomKey: snap.roomKey, title: snap.metadata.title, severity: snap.metadata.severity, status: snap.metadata.status, joinedAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
@@ -235,8 +259,11 @@ async function handlePearOpsMethod (method, params = {}) {
     return pearOpsSnapshot()
   }
   if (method === 'saveSettings') {
-    pearOpsService.localState.settings = { ...(pearOpsService.localState.settings || {}), ...params }
-    saveLocalState(); sendPearOpsState(); return pearOpsSnapshot()
+    const nextSettings = { ...defaultSettings(), ...(pearOpsService.localState.settings || {}), ...params }
+    nextSettings.discoveryFlushTimeout = Math.max(50, Math.min(2500, Number(nextSettings.discoveryFlushTimeout) || 250))
+    pearOpsService.localState.settings = nextSettings
+    if (pearOpsService.peer) pearOpsService.peer.name = nextSettings.displayName || 'Responder'
+    saveLocalState(); sendPearOpsStateNow(); return pearOpsSnapshot()
   }
   throw new Error(`unknown method ${method}`)
 }

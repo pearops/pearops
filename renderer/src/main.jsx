@@ -56,7 +56,7 @@ function usePearOps () {
 function App () {
   const { state, setState, ready } = usePearOps()
   const [filter, setFilter] = React.useState('all')
-  const [settingsOpen, setSettingsOpen] = React.useState(false)
+  const [page, setPage] = React.useState('incidents')
   const [incidentModal, setIncidentModal] = React.useState(null)
   const [draft, setDraft] = React.useState('')
   const [eventType, setEventType] = React.useState('update')
@@ -64,6 +64,7 @@ function App () {
   const active = state.active
   const activeMeta = active?.metadata || {}
   const identity = state.identity || { configured: false }
+  const settings = state.settings || {}
   const incidents = (state.incidents || []).filter(i => filter === 'all' || i.status === filter)
 
   async function run (fn) {
@@ -77,19 +78,42 @@ function App () {
     } finally { setBusy(false) }
   }
 
-  return <div className="app-shell">
+  React.useEffect(() => {
+    if (settings.defaultEventType && eventTypes.includes(settings.defaultEventType)) setEventType(settings.defaultEventType)
+  }, [settings.defaultEventType])
+
+  const notificationRef = React.useRef({ roomKey: null, count: 0 })
+  React.useEffect(() => {
+    const roomKey = active?.roomKey || null
+    const timeline = active?.timeline || []
+    const previous = notificationRef.current
+    if (roomKey !== previous.roomKey) {
+      notificationRef.current = { roomKey, count: timeline.length }
+      return
+    }
+    if (settings.notifications && timeline.length > previous.count && previous.count > 0 && 'Notification' in window) {
+      const event = timeline[timeline.length - 1]
+      if (Notification.permission === 'granted') new Notification(activeMeta.title || 'PearOps incident update', { body: event?.message || 'New timeline event' })
+      else if (Notification.permission === 'default') Notification.requestPermission().catch(() => {})
+    }
+    notificationRef.current = { roomKey, count: timeline.length }
+  }, [active?.roomKey, active?.timeline?.length, settings.notifications])
+
+  return <div className={`app-shell density-${settings.compact === false ? 'comfortable' : 'compact'} theme-${settings.theme || 'system'}`}>
     <header className="topbar">
       <div className="brand"><div className="mark">P</div><div><strong>PearOps</strong><span>Linux incident console</span></div></div>
       <div className="top-actions">
         <Badge tone={identity.configured ? 'green' : 'orange'}><ShieldCheck size={12}/> Keet identity {identity.configured ? short(identity.identityPublicKey) : 'not set up'}</Badge>
         <Badge><Users size={12}/> {active?.peers || 0} peers</Badge>
-        {identity.configured && <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(v => !v)}><Settings size={14}/> Settings</Button>}
+        {identity.configured && <Button variant={page === 'incidents' ? 'default' : 'ghost'} size="sm" onClick={() => setPage('incidents')}>Incidents</Button>}
+        {identity.configured && <Button variant={page === 'settings' ? 'default' : 'ghost'} size="sm" onClick={() => setPage('settings')}><Settings size={14}/> Settings</Button>}
       </div>
     </header>
 
     {!ready && <main className="onboarding-shell"><Card><CardContent>Starting Pear Runtime worker…</CardContent></Card></main>}
     {ready && !identity.configured && <Onboarding busy={busy} run={run} setState={setState} identity={identity}/>} 
-    {ready && identity.configured && <div className="workspace">
+    {ready && identity.configured && page === 'settings' && <SettingsPage state={state} run={run} />}
+    {ready && identity.configured && page === 'incidents' && <div className="workspace">
       <aside className="incident-sidebar">
         <div className="sidebar-top">
           <div>
@@ -108,9 +132,8 @@ function App () {
         </div>
       </aside>
 
-      {incidentModal && <IncidentModal mode={incidentModal} busy={busy} run={run} onClose={() => setIncidentModal(null)} />}
+      {incidentModal && <IncidentModal mode={incidentModal} busy={busy} run={run} settings={settings} onClose={() => setIncidentModal(null)} />}
       <main className="timeline-pane">
-        {settingsOpen && <SettingsPanel settings={state.settings} run={run}/>} 
         {!active?.roomKey && <EmptyIncident />} 
         {active?.roomKey && <>
           <section className="incident-header">
@@ -188,10 +211,10 @@ function Onboarding ({ busy, run, setState, identity }) {
   </main>
 }
 
-function IncidentModal ({ mode, busy, run, onClose }) {
+function IncidentModal ({ mode, busy, run, settings, onClose }) {
   const [roomKey, setRoomKey] = React.useState('')
   const [title, setTitle] = React.useState('Checkout API outage')
-  const [severity, setSeverity] = React.useState('SEV-2')
+  const [severity, setSeverity] = React.useState(settings?.defaultSeverity || 'SEV-2')
   const [description, setDescription] = React.useState('')
   const isJoin = mode === 'join'
 
@@ -250,13 +273,96 @@ function TimelineEvent ({ event }) {
   </article>
 }
 
-function SettingsPanel ({ settings, run }) {
-  const [displayName, setDisplayName] = React.useState(settings?.displayName || 'Responder')
-  return <Card className="settings-panel"><CardHeader><CardTitle>Settings</CardTitle></CardHeader><CardContent>
-    <label>Display name<input value={displayName} onChange={e => setDisplayName(e.target.value)} /></label>
-    <div className="placeholder-grid"><div>Notifications placeholder</div><div>Blind peer placeholder</div><div>Theme placeholder</div></div>
-    <Button size="sm" onClick={() => run(() => callWorker('saveSettings', { displayName }))}>Save settings</Button>
-  </CardContent></Card>
+function SettingsPage ({ state, run }) {
+  const settings = state.settings || {}
+  const identity = state.identity || {}
+  const app = state.app || {}
+  const [form, setForm] = React.useState({
+    displayName: settings.displayName || 'Responder',
+    notifications: settings.notifications !== false,
+    compact: settings.compact !== false,
+    theme: settings.theme || 'system',
+    defaultSeverity: settings.defaultSeverity || 'SEV-2',
+    defaultEventType: settings.defaultEventType || 'update',
+    discoveryFlushTimeout: settings.discoveryFlushTimeout || 250,
+    blindPeers: settings.blindPeers || ''
+  })
+
+  React.useEffect(() => {
+    setForm({
+      displayName: settings.displayName || 'Responder',
+      notifications: settings.notifications !== false,
+      compact: settings.compact !== false,
+      theme: settings.theme || 'system',
+      defaultSeverity: settings.defaultSeverity || 'SEV-2',
+      defaultEventType: settings.defaultEventType || 'update',
+      discoveryFlushTimeout: settings.discoveryFlushTimeout || 250,
+      blindPeers: settings.blindPeers || ''
+    })
+  }, [settings.displayName, settings.notifications, settings.compact, settings.theme, settings.defaultSeverity, settings.defaultEventType, settings.discoveryFlushTimeout, settings.blindPeers])
+
+  function setField (key, value) { setForm(prev => ({ ...prev, [key]: value })) }
+
+  function submit (event) {
+    event.preventDefault()
+    run(() => callWorker('saveSettings', {
+      ...form,
+      discoveryFlushTimeout: Number(form.discoveryFlushTimeout) || 250
+    }))
+  }
+
+  return <main className="settings-page">
+    <section className="settings-hero">
+      <div>
+        <p className="eyebrow"><Settings size={12}/> Settings</p>
+        <h1>Application settings</h1>
+        <p>Configure your local identity label, interface defaults, P2P behaviour, and notification preferences.</p>
+      </div>
+      <Badge tone="green">saved locally</Badge>
+    </section>
+
+    <form className="settings-grid" onSubmit={submit}>
+      <Card>
+        <CardHeader><CardTitle>Profile</CardTitle></CardHeader>
+        <CardContent className="settings-section">
+          <label>Display name<input value={form.displayName} onChange={e => setField('displayName', e.target.value)} placeholder="Responder" /></label>
+          <div className="setting-note">Used as the author name for new timeline events and new incident peers.</div>
+          <div className="readonly-row"><span>Keet identity</span><code>{short(identity.identityPublicKey || 'not configured', 34)}</code></div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Incident defaults</CardTitle></CardHeader>
+        <CardContent className="settings-section two-col">
+          <label>Default severity<select value={form.defaultSeverity} onChange={e => setField('defaultSeverity', e.target.value)}>{severities.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
+          <label>Default event type<select value={form.defaultEventType} onChange={e => setField('defaultEventType', e.target.value)}>{eventTypes.map(t => <option key={t} value={t}>{t}</option>)}</select></label>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>Interface</CardTitle></CardHeader>
+        <CardContent className="settings-section two-col">
+          <label>Theme<select value={form.theme} onChange={e => setField('theme', e.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
+          <label>Density<select value={form.compact ? 'compact' : 'comfortable'} onChange={e => setField('compact', e.target.value === 'compact')}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select></label>
+          <label className="check-row"><input type="checkbox" checked={form.notifications} onChange={e => setField('notifications', e.target.checked)} /> Enable local notifications</label>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle>P2P / advanced</CardTitle></CardHeader>
+        <CardContent className="settings-section">
+          <label>Discovery wait timeout<input type="number" min="50" max="2500" step="50" value={form.discoveryFlushTimeout} onChange={e => setField('discoveryFlushTimeout', e.target.value)} /></label>
+          <div className="setting-note">Lower values make incident switching feel faster. Peers continue connecting after the UI opens the room.</div>
+          <label>Blind peer keys<textarea value={form.blindPeers} onChange={e => setField('blindPeers', e.target.value)} placeholder="Optional comma-separated blind peer keys" rows={3}/></label>
+          <div className="readonly-row"><span>Storage</span><code>{app.storage || 'unknown'}</code></div>
+        </CardContent>
+      </Card>
+
+      <div className="settings-actions">
+        <Button>Save settings</Button>
+      </div>
+    </form>
+  </main>
 }
 
 function EmptyIncident () { return <Card className="empty-card"><CardContent><AlertCircle/> Create or join an incident to start a replicated timeline.</CardContent></Card> }
