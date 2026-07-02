@@ -6,7 +6,7 @@ It keeps the original hackathon MVP's P2P incident timeline model, but moves the
 
 - **Electron + Pear Runtime template** for Linux packaging and future Pear OTA distribution.
 - **React UI** with shadcn-style local components, compact Cloudflare-like colors, small typography, and dense incident-console layout.
-- **Keet portable identity keys** via `keet-identity-key`; every local event is signed and verified against the stable identity public key.
+- **Keet portable identity keys** via `keet-identity-key`; first-run onboarding creates a mnemonic or restores a previous account, and every local event is signed and verified against the stable identity public key.
 - **Local incident list** persisted in app storage. Joined incidents remain available until the user removes them from the app.
 - **Status filters** across local incidents: investigating, identified, monitoring, resolved.
 - **Full timeline view** for the selected incident.
@@ -77,14 +77,16 @@ React renderer
 
 ## Identity model
 
-`src/identity.js` wraps `keet-identity-key`:
+`src/identity.js` wraps `keet-identity-key` and the worker exposes first-run onboarding:
 
-1. Generate or load `identity-mnemonic.txt` from app storage.
-2. Derive a stable Keet `identityPublicKey`.
-3. Generate a per-device keypair.
-4. Bootstrap a device proof from the identity.
-5. Sign every appended timeline event.
-6. Verify replicated events and surface `verified Keet ID` in the UI.
+1. On first start, show onboarding if no mnemonic exists.
+2. Create a new mnemonic or restore a previous account from an existing mnemonic.
+3. Store `identity-mnemonic.txt` in app storage with file mode `0600`.
+4. Derive a stable Keet `identityPublicKey`.
+5. Generate a per-device keypair.
+6. Bootstrap a device proof from the identity.
+7. Sign every appended timeline event.
+8. Verify replicated events and surface `verified Keet ID` in the UI.
 
 The mnemonic file is sensitive and is not committed.
 

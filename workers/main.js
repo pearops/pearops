@@ -7,6 +7,7 @@ const goodbye = require('graceful-goodbye')
 const FramedStream = require('framed-stream')
 
 const { PearOpsPeer } = require('../src/peer')
+const { createKeetIdentity, identityStatus } = require('../src/identity')
 
 const pipe = new FramedStream(Bare.IPC)
 
@@ -31,7 +32,9 @@ if (updaterConfig.updates !== false) {
 }
 
 const stateFile = path.join(appStorage, 'pearops-state.json')
+const identityStorage = path.join(appStorage, 'identity')
 let localState = loadState()
+let identitySnapshot = { configured: fs.existsSync(path.join(identityStorage, 'identity-mnemonic.txt')), mnemonicPath: path.join(identityStorage, 'identity-mnemonic.txt') }
 let peer = null
 let activeIncidentId = localState.activeIncidentId || null
 
@@ -52,12 +55,22 @@ function emitState () {
   pipe.write(JSON.stringify({ type: 'state', state: snapshot() }))
 }
 
+async function refreshIdentity () {
+  identitySnapshot = await identityStatus(identityStorage).catch(err => ({ configured: false, mnemonicPath: path.join(identityStorage, 'identity-mnemonic.txt'), error: err.message }))
+  return identitySnapshot
+}
+
+function ensureIdentityConfigured () {
+  if (!identitySnapshot.configured) throw new Error('Set up or restore your Keet identity before joining incidents')
+}
+
 function snapshot () {
   const peerSnap = peer ? peer.snapshot() : null
   return {
     incidents: localState.incidents,
     activeIncidentId,
     active: peerSnap,
+    identity: identitySnapshot,
     settings: localState.settings || {},
     app: { version: updaterConfig.version, storage: appStorage }
   }
@@ -91,7 +104,8 @@ async function openPeerForIncident (incident) {
   if (peer) await peer.close().catch(() => {})
   peer = new PearOpsPeer({
     name: localState.settings?.displayName || 'Responder',
-    storage: incidentStorage(incident.id)
+    storage: incidentStorage(incident.id),
+    identityStorage
   })
   peer.on('snapshot', () => { syncActiveMetadata(); emitState() })
   peer.on('event', () => { syncActiveMetadata(); emitState() })
@@ -104,9 +118,10 @@ async function openPeerForIncident (incident) {
 }
 
 async function createIncident (payload) {
+  ensureIdentityConfigured()
   const id = `inc-${Date.now()}-${Math.random().toString(16).slice(2)}`
   if (peer) await peer.close().catch(() => {})
-  peer = new PearOpsPeer({ name: localState.settings?.displayName || 'Responder', storage: incidentStorage(id) })
+  peer = new PearOpsPeer({ name: localState.settings?.displayName || 'Responder', storage: incidentStorage(id), identityStorage })
   peer.on('snapshot', () => { syncActiveMetadata(); emitState() })
   peer.on('event', () => { syncActiveMetadata(); emitState() })
   peer.on('peers', emitState)
@@ -117,11 +132,18 @@ async function createIncident (payload) {
 }
 
 async function joinIncident (payload) {
+  ensureIdentityConfigured()
   const id = `inc-${Date.now()}-${Math.random().toString(16).slice(2)}`
   const record = { id, roomKey: payload.roomKey, title: payload.title || 'Joined incident', severity: payload.severity || 'SEV2', status: 'joined', joinedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
   upsertIncident(record)
   await openPeerForIncident(record)
   return snapshot()
+}
+
+async function setupIdentity (payload = {}) {
+  const bundle = await createKeetIdentity(identityStorage, { mnemonic: payload.mnemonic })
+  await refreshIdentity()
+  return { ...snapshot(), generatedMnemonic: payload.mnemonic ? null : bundle.mnemonic }
 }
 
 async function handle (msg) {
@@ -134,6 +156,7 @@ async function handle (msg) {
   try {
     let result
     if (method === 'getState') result = snapshot()
+    else if (method === 'setupIdentity') result = await setupIdentity(params)
     else if (method === 'createIncident') result = await createIncident(params)
     else if (method === 'joinIncident') result = await joinIncident(params)
     else if (method === 'selectIncident') {
@@ -165,4 +188,6 @@ goodbye(async () => {
   await runtimeStore.close()
 })
 
-pipe.write(JSON.stringify({ type: 'ready', state: snapshot() }))
+refreshIdentity()
+  .then(() => pipe.write(JSON.stringify({ type: 'ready', state: snapshot() })))
+  .catch(err => pipe.write(JSON.stringify({ type: 'ready', state: { ...snapshot(), identity: { ...identitySnapshot, error: err.message } } })))

@@ -3,6 +3,7 @@ const path = require('path')
 const os = require('os')
 const assert = require('assert')
 const { PearOpsPeer } = require('../src/peer')
+const { createKeetIdentity } = require('../src/identity')
 
 const sleep = ms => new Promise(resolve => setTimeout(resolve, ms))
 
@@ -18,8 +19,12 @@ async function waitFor (label, fn, timeout = 30000) {
 
 async function main () {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'pearops-smoke-'))
-  const a = new PearOpsPeer({ name: 'Peer-A', storage: path.join(root, 'a') })
-  const b = new PearOpsPeer({ name: 'Peer-B', storage: path.join(root, 'b') })
+  const identityA = path.join(root, 'identity-a')
+  const identityB = path.join(root, 'identity-b')
+  const account = await createKeetIdentity(identityA)
+  await createKeetIdentity(identityB, { mnemonic: account.mnemonic })
+  const a = new PearOpsPeer({ name: 'Peer-A', storage: path.join(root, 'a'), identityStorage: identityA })
+  const b = new PearOpsPeer({ name: 'Peer-B', storage: path.join(root, 'b'), identityStorage: identityB })
   try {
     const room = await a.createRoom({ title: 'Smoke test incident', severity: 'SEV2', status: 'investigating' })
     await b.joinRoom({ roomKey: room.roomKey })

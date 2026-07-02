@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
-import { AlertCircle, CheckCircle2, Clock3, Copy, Filter, MessageSquare, Plus, Settings, ShieldCheck, Trash2, Users } from 'lucide-react'
+import { AlertCircle, Clock3, Copy, Filter, KeyRound, MessageSquare, Plus, Settings, ShieldCheck, Trash2, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -9,6 +9,7 @@ import './styles.css'
 const worker = '/workers/main.js'
 const statuses = ['all', 'investigating', 'identified', 'monitoring', 'resolved']
 const eventTypes = ['update', 'investigation', 'mitigation', 'decision']
+const pending = new Map()
 
 function callWorker (method, params = {}) {
   const id = crypto.randomUUID()
@@ -18,10 +19,8 @@ function callWorker (method, params = {}) {
   })
 }
 
-const pending = new Map()
-
 function usePearOps () {
-  const [state, setState] = React.useState({ incidents: [], active: null, settings: {} })
+  const [state, setState] = React.useState({ incidents: [], active: null, settings: {}, identity: { configured: false } })
   const [ready, setReady] = React.useState(false)
 
   React.useEffect(() => {
@@ -58,13 +57,15 @@ function App () {
   const [busy, setBusy] = React.useState(false)
   const active = state.active
   const activeMeta = active?.metadata || {}
+  const identity = state.identity || { configured: false }
   const incidents = (state.incidents || []).filter(i => filter === 'all' || i.status === filter)
 
   async function run (fn) {
     setBusy(true)
     try {
       const next = await fn()
-      if (next?.incidents) setState(next)
+      if (next?.incidents && !next.generatedMnemonic) setState(next)
+      return next
     } catch (err) {
       alert(err.message)
     } finally { setBusy(false) }
@@ -74,13 +75,15 @@ function App () {
     <header className="topbar">
       <div className="brand"><div className="mark">P</div><div><strong>PearOps</strong><span>Linux incident console</span></div></div>
       <div className="top-actions">
-        <Badge tone="green"><ShieldCheck size={12}/> Keet identity {active?.identity?.identityPublicKey ? short(active.identity.identityPublicKey) : 'loading'}</Badge>
+        <Badge tone={identity.configured ? 'green' : 'orange'}><ShieldCheck size={12}/> Keet identity {identity.configured ? short(identity.identityPublicKey) : 'not set up'}</Badge>
         <Badge><Users size={12}/> {active?.peers || 0} peers</Badge>
-        <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(v => !v)}><Settings size={14}/> Settings</Button>
+        {identity.configured && <Button variant="ghost" size="sm" onClick={() => setSettingsOpen(v => !v)}><Settings size={14}/> Settings</Button>}
       </div>
     </header>
 
-    <div className="workspace">
+    {!ready && <main className="onboarding-shell"><Card><CardContent>Starting Pear Runtime worker…</CardContent></Card></main>}
+    {ready && !identity.configured && <Onboarding busy={busy} run={run} setState={setState} identity={identity}/>} 
+    {ready && identity.configured && <div className="workspace">
       <aside className="incident-sidebar">
         <div className="sidebar-top">
           <div>
@@ -90,9 +93,7 @@ function App () {
           <Button size="sm" onClick={() => run(() => callWorker('createIncident', { title: 'New incident', severity: 'SEV2', status: 'investigating' }))}><Plus size={14}/></Button>
         </div>
         <div className="filters">{statuses.map(s => <button key={s} className={filter === s ? 'active' : ''} onClick={() => setFilter(s)}>{s}</button>)}</div>
-        <div className="quick-join">
-          <JoinCreate busy={busy} run={run}/>
-        </div>
+        <div className="quick-join"><JoinCreate run={run}/></div>
         <div className="incident-list">
           {incidents.map(incident => <IncidentRow key={incident.id} incident={incident} selected={incident.id === state.activeIncidentId} onSelect={() => run(() => callWorker('selectIncident', { id: incident.id }))} onRemove={(e) => { e.stopPropagation(); run(() => callWorker('removeIncident', { id: incident.id })) }}/>) }
           {!incidents.length && <div className="empty-state">No local incidents for this filter.</div>}
@@ -101,8 +102,7 @@ function App () {
 
       <main className="timeline-pane">
         {settingsOpen && <SettingsPanel settings={state.settings} run={run}/>} 
-        {!ready && <Card><CardContent>Starting Pear Runtime worker…</CardContent></Card>}
-        {ready && !active?.roomKey && <EmptyIncident run={run}/>} 
+        {!active?.roomKey && <EmptyIncident />} 
         {active?.roomKey && <>
           <section className="incident-header">
             <div>
@@ -129,8 +129,54 @@ function App () {
           </form>
         </>}
       </main>
-    </div>
+    </div>}
   </div>
+}
+
+function Onboarding ({ busy, run, setState, identity }) {
+  const [mode, setMode] = React.useState('create')
+  const [mnemonic, setMnemonic] = React.useState('')
+  const [generated, setGenerated] = React.useState(null)
+  const [nextState, setNextState] = React.useState(null)
+
+  async function submit (event) {
+    event.preventDefault()
+    const result = await run(() => callWorker('setupIdentity', mode === 'restore' ? { mnemonic: mnemonic.trim() } : {}))
+    if (!result) return
+    if (result.generatedMnemonic) {
+      setNextState({ ...result, generatedMnemonic: undefined })
+      setGenerated(result.generatedMnemonic)
+    } else setState(result)
+  }
+
+  if (generated) return <main className="onboarding-shell">
+    <Card className="onboarding-card">
+      <CardHeader><CardTitle><KeyRound size={16}/> Save your recovery phrase</CardTitle></CardHeader>
+      <CardContent>
+        <p className="onboarding-copy">This is the only time PearOps will show the generated mnemonic. Store it somewhere safe before continuing.</p>
+        <pre className="mnemonic-box">{generated}</pre>
+        <Button onClick={() => setState(nextState)}>I saved it, continue</Button>
+      </CardContent>
+    </Card>
+  </main>
+
+  return <main className="onboarding-shell">
+    <Card className="onboarding-card">
+      <CardHeader><CardTitle><KeyRound size={16}/> Set up your Keet identity</CardTitle></CardHeader>
+      <CardContent>
+        <p className="onboarding-copy">PearOps uses a portable Keet identity key to sign incident timeline events. Create a new account or restore an existing mnemonic.</p>
+        {identity.error && <div className="identity-error">{identity.error}</div>}
+        <div className="onboarding-tabs">
+          <button className={mode === 'create' ? 'active' : ''} onClick={() => setMode('create')}>Create new</button>
+          <button className={mode === 'restore' ? 'active' : ''} onClick={() => setMode('restore')}>Restore</button>
+        </div>
+        <form className="onboarding-form" onSubmit={submit}>
+          {mode === 'restore' && <label>Mnemonic<textarea value={mnemonic} onChange={e => setMnemonic(e.target.value)} placeholder="Paste your previous Keet identity mnemonic…" rows={4}/></label>}
+          <Button disabled={busy || (mode === 'restore' && !mnemonic.trim())}>{mode === 'create' ? 'Create identity' : 'Restore identity'}</Button>
+        </form>
+      </CardContent>
+    </Card>
+  </main>
 }
 
 function JoinCreate ({ run }) {
@@ -170,7 +216,7 @@ function SettingsPanel ({ settings, run }) {
   </CardContent></Card>
 }
 
-function EmptyIncident ({ run }) { return <Card className="empty-card"><CardContent><AlertCircle/> Create or join an incident to start a replicated timeline.</CardContent></Card> }
+function EmptyIncident () { return <Card className="empty-card"><CardContent><AlertCircle/> Create or join an incident to start a replicated timeline.</CardContent></Card> }
 function short (v = '', n = 12) { return v.length > n ? `${v.slice(0, n)}…` : v }
 function statusTone (s) { return s === 'resolved' ? 'green' : s === 'monitoring' ? 'blue' : s === 'identified' ? 'orange' : 'red' }
 

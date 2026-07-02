@@ -68,13 +68,16 @@ class PearOpsPeer extends EventEmitter {
     this.blindRegistered = new Set()
     this.blindRegistrationErrors = []
     this.identityBundle = null
+    this.identityStorage = opts.identityStorage || path.join(this.storage, 'identity')
+    this.closing = false
 
     // Pear/P2P-specific: a separate replication swarm is dedicated to Corestore.
     // Corestore owns the Hypercore/Hyperdrive protocol stream, while the control
     // swarm exchanges room metadata and writer/drive keys as small JSON lines.
     this.replicationSwarm.on('connection', conn => {
       conn.on('error', () => {})
-      this.store.replicate(conn)
+      if (this.closing) return conn.destroy()
+      try { this.store.replicate(conn) } catch { conn.destroy() }
     })
     this.controlSwarm.on('connection', (conn, info) => this._onControlConnection(conn, info))
     this.controlSwarm.on('update', () => this.emit('peers', this.peerCount()))
@@ -92,7 +95,7 @@ class PearOpsPeer extends EventEmitter {
   }
 
   async joinRoom ({ roomKey, title, severity, status, create = false }) {
-    if (!this.identityBundle) this.identityBundle = await createKeetIdentity(path.join(this.storage, 'identity'))
+    if (!this.identityBundle) this.identityBundle = await createKeetIdentity(this.identityStorage, { requireExisting: true })
     this.roomTopic = topicFromRoomKey(create ? null : roomKey)
     this.roomKey = roomKeyFromTopic(this.roomTopic)
     fs.mkdirSync(this.storage, { recursive: true })
@@ -362,6 +365,7 @@ class PearOpsPeer extends EventEmitter {
   }
 
   async close () {
+    this.closing = true
     if (this.pollTimer) clearInterval(this.pollTimer)
     await Promise.allSettled([
       this.blindPeering && this.blindPeering.close(),
