@@ -69,6 +69,7 @@ class PearOpsPeer extends EventEmitter {
     this.blindRegistrationErrors = []
     this.identityBundle = null
     this.identityStorage = opts.identityStorage || path.join(this.storage, 'identity')
+    this.discoveryFlushTimeout = opts.discoveryFlushTimeout ?? 2500
     this.closing = false
 
     // Pear/P2P-specific: a separate replication swarm is dedicated to Corestore.
@@ -130,7 +131,7 @@ class PearOpsPeer extends EventEmitter {
     // discovery succeeds.
     await Promise.race([
       Promise.allSettled([c.flushed(), r.flushed()]),
-      new Promise(resolve => setTimeout(resolve, 2500))
+      new Promise(resolve => setTimeout(resolve, this.discoveryFlushTimeout))
     ])
     this._broadcastHello()
     this._startPolling()

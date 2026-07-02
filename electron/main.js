@@ -58,7 +58,9 @@ const pearOpsService = {
   localState: null,
   identitySnapshot: null,
   peer: null,
-  activeIncidentId: null
+  activeIncidentId: null,
+  switching: false,
+  stateTimer: null
 }
 
 function loadLocalState () {
@@ -82,6 +84,16 @@ function pearOpsSnapshot () {
 }
 
 function sendPearOpsState () {
+  if (pearOpsService.stateTimer) clearTimeout(pearOpsService.stateTimer)
+  pearOpsService.stateTimer = setTimeout(() => {
+    pearOpsService.stateTimer = null
+    sendToAll('pear:worker:ipc:' + mainWorkerSpecifier, Buffer.from(JSON.stringify({ type: 'state', state: pearOpsSnapshot() })))
+  }, 40)
+}
+
+function sendPearOpsStateNow () {
+  if (pearOpsService.stateTimer) clearTimeout(pearOpsService.stateTimer)
+  pearOpsService.stateTimer = null
   sendToAll('pear:worker:ipc:' + mainWorkerSpecifier, Buffer.from(JSON.stringify({ type: 'state', state: pearOpsSnapshot() })))
 }
 
@@ -113,17 +125,18 @@ function upsertPearOpsIncident (record) {
 }
 
 function syncPearOpsActiveMetadata () {
-  if (!pearOpsService.peer || !pearOpsService.activeIncidentId) return
+  if (!pearOpsService.peer || !pearOpsService.activeIncidentId || pearOpsService.switching) return
   const snap = pearOpsService.peer.snapshot()
   const meta = snap.metadata || {}
+  const current = pearOpsService.localState.incidents.find(i => i.id === pearOpsService.activeIncidentId) || {}
   upsertPearOpsIncident({
     id: pearOpsService.activeIncidentId,
-    roomKey: snap.roomKey,
-    title: meta.title || 'Untitled incident',
-    severity: meta.severity || 'SEV2',
-    status: meta.status || 'investigating',
-    updatedAt: snap.timeline.at(-1)?.timestamp || new Date().toISOString(),
-    joinedAt: pearOpsService.localState.incidents.find(i => i.id === pearOpsService.activeIncidentId)?.joinedAt || new Date().toISOString()
+    roomKey: snap.roomKey || current.roomKey,
+    title: meta.title || current.title || 'Joined incident',
+    severity: meta.severity || current.severity || 'SEV-2',
+    status: meta.status || current.status || 'investigating',
+    updatedAt: snap.timeline.at(-1)?.timestamp || current.updatedAt || new Date().toISOString(),
+    joinedAt: current.joinedAt || new Date().toISOString()
   })
 }
 
@@ -132,24 +145,32 @@ function incidentStorage (incidentId) {
 }
 
 function wirePearOpsPeer (peer) {
-  peer.on('snapshot', () => { syncPearOpsActiveMetadata(); sendPearOpsState() })
-  peer.on('event', () => { syncPearOpsActiveMetadata(); sendPearOpsState() })
-  peer.on('peers', sendPearOpsState)
+  peer.on('snapshot', () => { if (peer !== pearOpsService.peer) return; syncPearOpsActiveMetadata(); sendPearOpsState() })
+  peer.on('event', () => { if (peer !== pearOpsService.peer) return; syncPearOpsActiveMetadata(); sendPearOpsState() })
+  peer.on('peers', () => { if (peer === pearOpsService.peer) sendPearOpsState() })
 }
 
 async function openPearOpsIncident (incident) {
-  if (pearOpsService.peer) await pearOpsService.peer.close().catch(() => {})
+  if (pearOpsService.activeIncidentId === incident.id && pearOpsService.peer?.roomKey === incident.roomKey) return
+  pearOpsService.activeIncidentId = incident.id
+  pearOpsService.localState.activeIncidentId = incident.id
+  saveLocalState()
+  sendPearOpsStateNow()
+  pearOpsService.switching = true
+  const previousPeer = pearOpsService.peer
+  pearOpsService.peer = null
+  if (previousPeer) await previousPeer.close().catch(() => {})
   pearOpsService.peer = new PearOpsPeer({
     name: pearOpsService.localState.settings?.displayName || 'Responder',
     storage: incidentStorage(incident.id),
-    identityStorage: pearOpsService.identityStorage
+    identityStorage: pearOpsService.identityStorage,
+    discoveryFlushTimeout: 250
   })
   wirePearOpsPeer(pearOpsService.peer)
+  pearOpsService.switching = false
   await pearOpsService.peer.joinRoom({ roomKey: incident.roomKey })
-  pearOpsService.activeIncidentId = incident.id
-  pearOpsService.localState.activeIncidentId = incident.id
   syncPearOpsActiveMetadata()
-  sendPearOpsState()
+  sendPearOpsStateNow()
 }
 
 async function handlePearOpsMethod (method, params = {}) {
@@ -165,7 +186,7 @@ async function handlePearOpsMethod (method, params = {}) {
     if (pearOpsService.peer) await pearOpsService.peer.close().catch(() => {})
     pearOpsService.activeIncidentId = id
     pearOpsService.localState.activeIncidentId = id
-    pearOpsService.peer = new PearOpsPeer({ name: pearOpsService.localState.settings?.displayName || 'Responder', storage: incidentStorage(id), identityStorage: pearOpsService.identityStorage })
+    pearOpsService.peer = new PearOpsPeer({ name: pearOpsService.localState.settings?.displayName || 'Responder', storage: incidentStorage(id), identityStorage: pearOpsService.identityStorage, discoveryFlushTimeout: 250 })
     wirePearOpsPeer(pearOpsService.peer)
     const snap = await pearOpsService.peer.createRoom({ title: params.title, severity: params.severity, status: params.status || 'investigating' })
     upsertPearOpsIncident({ id, roomKey: snap.roomKey, title: snap.metadata.title, severity: snap.metadata.severity, status: snap.metadata.status, joinedAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
