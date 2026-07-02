@@ -9,6 +9,7 @@ import './styles.css'
 const worker = '/workers/main.js'
 const statuses = ['all', 'investigating', 'identified', 'monitoring', 'resolved']
 const eventTypes = ['update', 'investigation', 'mitigation', 'decision']
+const severities = ['SEV-0', 'SEV-1', 'SEV-2', 'SEV-3']
 const pending = new Map()
 
 async function callWorker (method, params = {}) {
@@ -56,6 +57,7 @@ function App () {
   const { state, setState, ready } = usePearOps()
   const [filter, setFilter] = React.useState('all')
   const [settingsOpen, setSettingsOpen] = React.useState(false)
+  const [incidentModal, setIncidentModal] = React.useState(null)
   const [draft, setDraft] = React.useState('')
   const [eventType, setEventType] = React.useState('update')
   const [busy, setBusy] = React.useState(false)
@@ -96,13 +98,17 @@ function App () {
           </div>
         </div>
         <div className="filters">{statuses.map(s => <button key={s} className={filter === s ? 'active' : ''} onClick={() => setFilter(s)}>{s}</button>)}</div>
-        <div className="quick-join"><JoinCreate run={run}/></div>
+        <div className="incident-actions">
+          <Button size="sm" onClick={() => setIncidentModal('create')}>Create incident</Button>
+          <Button variant="outline" size="sm" onClick={() => setIncidentModal('join')}>Join room</Button>
+        </div>
         <div className="incident-list">
           {incidents.map(incident => <IncidentRow key={incident.id} incident={incident} selected={incident.id === state.activeIncidentId} onSelect={() => run(() => callWorker('selectIncident', { id: incident.id }))} onRemove={(e) => { e.stopPropagation(); run(() => callWorker('removeIncident', { id: incident.id })) }}/>) }
           {!incidents.length && <div className="empty-state">No local incidents for this filter.</div>}
         </div>
       </aside>
 
+      {incidentModal && <IncidentModal mode={incidentModal} busy={busy} run={run} onClose={() => setIncidentModal(null)} />}
       <main className="timeline-pane">
         {settingsOpen && <SettingsPanel settings={state.settings} run={run}/>} 
         {!active?.roomKey && <EmptyIncident />} 
@@ -182,16 +188,44 @@ function Onboarding ({ busy, run, setState, identity }) {
   </main>
 }
 
-function JoinCreate ({ run }) {
+function IncidentModal ({ mode, busy, run, onClose }) {
   const [roomKey, setRoomKey] = React.useState('')
-  const [title, setTitle] = React.useState('Checkout API outage')
-  return <div className="join-card">
-    <p className="mini-heading">Create incident</p>
-    <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Incident title" />
-    <Button size="sm" onClick={() => run(() => callWorker('createIncident', { title, severity: 'SEV2', status: 'investigating' }))}>Create incident</Button>
-    <p className="mini-heading">Join existing incident</p>
-    <input value={roomKey} onChange={e => setRoomKey(e.target.value)} placeholder="pearops: room key" />
-    <Button variant="outline" size="sm" disabled={!roomKey.trim()} onClick={() => run(() => callWorker('joinIncident', { roomKey: roomKey.trim() }))}>Join incident</Button>
+  const [title, setTitle] = React.useState(mode === 'create' ? 'Checkout API outage' : 'Joined incident')
+  const [severity, setSeverity] = React.useState('SEV-2')
+  const [description, setDescription] = React.useState('')
+  const isJoin = mode === 'join'
+
+  async function submit (event) {
+    event.preventDefault()
+    const payload = {
+      title: title.trim() || (isJoin ? 'Joined incident' : 'New incident'),
+      severity,
+      description: description.trim(),
+      status: 'investigating'
+    }
+    if (isJoin) payload.roomKey = roomKey.trim()
+    const result = await run(() => callWorker(isJoin ? 'joinIncident' : 'createIncident', payload))
+    if (result) onClose()
+  }
+
+  return <div className="modal-backdrop" onClick={onClose}>
+    <form className="incident-modal" onSubmit={submit} onClick={e => e.stopPropagation()}>
+      <div className="modal-header">
+        <div>
+          <p className="eyebrow">{isJoin ? 'Join room' : 'Create incident'}</p>
+          <h3>{isJoin ? 'Join existing PearOps room' : 'Create new PearOps incident'}</h3>
+        </div>
+        <button type="button" className="modal-close" onClick={onClose}>Close</button>
+      </div>
+      {isJoin && <label>Room key<input value={roomKey} onChange={e => setRoomKey(e.target.value)} placeholder="pearops: room key" autoFocus /></label>}
+      <label>Title<input value={title} onChange={e => setTitle(e.target.value)} placeholder="Incident title" autoFocus={!isJoin} /></label>
+      <label>Severity<select value={severity} onChange={e => setSeverity(e.target.value)}>{severities.map(s => <option key={s} value={s}>{s}</option>)}</select></label>
+      <label>Brief description<textarea value={description} onChange={e => setDescription(e.target.value)} placeholder="What is happening? This will be posted as the first timeline message." rows={4}/></label>
+      <div className="modal-actions">
+        <Button type="button" variant="ghost" onClick={onClose}>Cancel</Button>
+        <Button disabled={busy || (isJoin && !roomKey.trim())}>{isJoin ? 'Join room' : 'Create incident'}</Button>
+      </div>
+    </form>
   </div>
 }
 

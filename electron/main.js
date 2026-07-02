@@ -169,6 +169,8 @@ async function handlePearOpsMethod (method, params = {}) {
     wirePearOpsPeer(pearOpsService.peer)
     const snap = await pearOpsService.peer.createRoom({ title: params.title, severity: params.severity, status: params.status || 'investigating' })
     upsertPearOpsIncident({ id, roomKey: snap.roomKey, title: snap.metadata.title, severity: snap.metadata.severity, status: snap.metadata.status, joinedAt: new Date().toISOString(), updatedAt: new Date().toISOString() })
+    if (params.description?.trim()) await pearOpsService.peer.postEvent({ eventType: 'update', message: params.description.trim() })
+    syncPearOpsActiveMetadata()
     sendPearOpsState()
     return pearOpsSnapshot()
   }
@@ -178,6 +180,9 @@ async function handlePearOpsMethod (method, params = {}) {
     const record = { id, roomKey: params.roomKey, title: params.title || 'Joined incident', severity: params.severity || 'SEV2', status: 'joined', joinedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
     upsertPearOpsIncident(record)
     await openPearOpsIncident(record)
+    if (params.description?.trim()) await pearOpsService.peer.postEvent({ eventType: 'update', message: params.description.trim() })
+    syncPearOpsActiveMetadata()
+    sendPearOpsState()
     return pearOpsSnapshot()
   }
   if (method === 'selectIncident') {
