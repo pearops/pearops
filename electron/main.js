@@ -190,8 +190,18 @@ async function handlePearOpsMethod (method, params = {}) {
     }
     saveLocalState(); sendPearOpsState(); return pearOpsSnapshot()
   }
-  if (method === 'postEvent') return pearOpsService.peer.postEvent(params)
-  if (method === 'setStatus') return pearOpsService.peer.setStatus(params.status)
+  if (method === 'postEvent') {
+    await pearOpsService.peer.postEvent(params)
+    syncPearOpsActiveMetadata()
+    sendPearOpsState()
+    return pearOpsSnapshot()
+  }
+  if (method === 'setStatus') {
+    await pearOpsService.peer.setStatus(params.status)
+    syncPearOpsActiveMetadata()
+    sendPearOpsState()
+    return pearOpsSnapshot()
+  }
   if (method === 'saveSettings') {
     pearOpsService.localState.settings = { ...(pearOpsService.localState.settings || {}), ...params }
     saveLocalState(); sendPearOpsState(); return pearOpsSnapshot()

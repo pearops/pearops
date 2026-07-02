@@ -1,6 +1,6 @@
 import * as React from 'react'
 import { createRoot } from 'react-dom/client'
-import { AlertCircle, Clock3, Copy, Filter, KeyRound, MessageSquare, Plus, Settings, ShieldCheck, Trash2, Users } from 'lucide-react'
+import { AlertCircle, Clock3, Copy, Filter, KeyRound, MessageSquare, Settings, ShieldCheck, Users } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -94,7 +94,6 @@ function App () {
             <p className="eyebrow"><Filter size={12}/> Incidents</p>
             <h2>{state.incidents?.length || 0} joined</h2>
           </div>
-          <Button size="sm" onClick={() => run(() => callWorker('createIncident', { title: 'New incident', severity: 'SEV2', status: 'investigating' }))}><Plus size={14}/></Button>
         </div>
         <div className="filters">{statuses.map(s => <button key={s} className={filter === s ? 'active' : ''} onClick={() => setFilter(s)}>{s}</button>)}</div>
         <div className="quick-join"><JoinCreate run={run}/></div>
@@ -187,18 +186,20 @@ function JoinCreate ({ run }) {
   const [roomKey, setRoomKey] = React.useState('')
   const [title, setTitle] = React.useState('Checkout API outage')
   return <div className="join-card">
+    <p className="mini-heading">Create incident</p>
     <input value={title} onChange={e => setTitle(e.target.value)} placeholder="Incident title" />
-    <div className="join-row"><Button size="sm" onClick={() => run(() => callWorker('createIncident', { title, severity: 'SEV2', status: 'investigating' }))}>Create</Button></div>
+    <Button size="sm" onClick={() => run(() => callWorker('createIncident', { title, severity: 'SEV2', status: 'investigating' }))}>Create incident</Button>
+    <p className="mini-heading">Join existing incident</p>
     <input value={roomKey} onChange={e => setRoomKey(e.target.value)} placeholder="pearops: room key" />
     <Button variant="outline" size="sm" disabled={!roomKey.trim()} onClick={() => run(() => callWorker('joinIncident', { roomKey: roomKey.trim() }))}>Join incident</Button>
   </div>
 }
 
 function IncidentRow ({ incident, selected, onSelect, onRemove }) {
-  return <button className={`incident-row ${selected ? 'selected' : ''}`} onClick={onSelect}>
+  return <div className={`incident-row ${selected ? 'selected' : ''}`} role="button" tabIndex={0} onClick={onSelect} onKeyDown={e => { if (e.key === 'Enter') onSelect() }}>
     <div className="row-main"><strong>{incident.title}</strong><span>{short(incident.roomKey, 18)}</span></div>
-    <div className="row-meta"><Badge tone={statusTone(incident.status)}>{incident.status}</Badge><small>{incident.severity}</small><Trash2 size={13} onClick={onRemove}/></div>
-  </button>
+    <div className="row-meta"><Badge tone={statusTone(incident.status)}>{incident.status}</Badge><small>{incident.severity}</small><button className="remove-incident" title="Remove this incident from local app state" onClick={onRemove}>Remove</button></div>
+  </div>
 }
 
 function TimelineEvent ({ event }) {

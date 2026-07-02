@@ -46,6 +46,7 @@ h2 { margin: 0; color: var(--cf-text-strong); font-size: 16px; letter-spacing: -
 .filters button { height: 26px; border: 1px solid var(--cf-border); border-radius: 999px; padding: 0 8px; background: white; color: var(--cf-muted); font-size: 11px; font-weight: 700; text-transform: capitalize; }
 .filters button.active { color: var(--cf-orange-dark); background: var(--cf-orange-soft); border-color: #fed7aa; }
 .join-card { display: grid; gap: 6px; border: 1px solid var(--cf-border); border-radius: 10px; padding: 8px; background: white; }
+.mini-heading { margin: 2px 0 0; color: var(--cf-muted); font-size: 10px; font-weight: 850; letter-spacing: .06em; text-transform: uppercase; }
 .incident-list { min-height: 0; display: grid; align-content: start; gap: 6px; overflow: auto; padding-right: 2px; }
 .incident-row { width: 100%; display: grid; grid-template-columns: minmax(0,1fr) auto; gap: 8px; align-items: center; border: 1px solid var(--cf-border); border-radius: 9px; background: white; padding: 9px; text-align: left; }
 .incident-row:hover, .incident-row.selected { border-color: #f7b37a; background: #fffaf5; }
@@ -53,6 +54,8 @@ h2 { margin: 0; color: var(--cf-text-strong); font-size: 16px; letter-spacing: -
 .row-main strong { display: block; color: var(--cf-text-strong); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .row-main span { display: block; margin-top: 3px; color: var(--cf-muted); font-family: ui-monospace, SFMono-Regular, monospace; font-size: 10px; }
 .row-meta { display: grid; justify-items: end; gap: 5px; color: var(--cf-muted); }
+.remove-incident { height: 22px; border: 1px solid #fecdd3; border-radius: 999px; padding: 0 7px; background: var(--cf-red-soft); color: var(--cf-red); font-size: 10px; font-weight: 800; }
+.remove-incident:hover { background: #ffe4e6; }
 .timeline-pane { min-height: 0; display: grid; grid-template-rows: auto 1fr auto; gap: 10px; padding: 12px; overflow: hidden; }
 .incident-header { display: flex; justify-content: space-between; gap: 14px; border: 1px solid var(--cf-border); border-radius: 12px; padding: 12px; background: white; box-shadow: 0 1px 2px rgba(16,24,40,.04); }
 .copy { display: inline-flex; align-items: center; gap: 4px; border: 0; background: transparent; color: var(--cf-blue); font-family: ui-monospace, SFMono-Regular, monospace; padding: 0; }
