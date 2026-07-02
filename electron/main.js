@@ -219,11 +219,14 @@ async function handlePearOpsRPC (data) {
   const { id, method, params = {} } = msg
   try {
     const result = await handlePearOpsMethod(method, params)
-    sendToAll('pear:worker:ipc:' + mainWorkerSpecifier, Buffer.from(JSON.stringify({ type: 'response', id, result })))
+    const response = { type: 'response', id, result }
+    sendToAll('pear:worker:ipc:' + mainWorkerSpecifier, Buffer.from(JSON.stringify(response)))
+    return response
   } catch (err) {
-    sendToAll('pear:worker:ipc:' + mainWorkerSpecifier, Buffer.from(JSON.stringify({ type: 'response', id, error: err.message })))
+    const response = { type: 'response', id, error: err.message }
+    sendToAll('pear:worker:ipc:' + mainWorkerSpecifier, Buffer.from(JSON.stringify(response)))
+    return response
   }
-  return true
 }
 
 app.on('before-quit', () => {
@@ -324,8 +327,7 @@ async function createWindow() {
 ipcMain.handle('pear:applyUpdate', () => false)
 ipcMain.handle('pear:startWorker', async (evt, filename) => {
   if (filename === mainWorkerSpecifier) {
-    await startPearOpsService()
-    return true
+    return startPearOpsService()
   }
   getWorker(filename)
   return true

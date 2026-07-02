@@ -11,11 +11,14 @@ const statuses = ['all', 'investigating', 'identified', 'monitoring', 'resolved'
 const eventTypes = ['update', 'investigation', 'mitigation', 'decision']
 const pending = new Map()
 
-function callWorker (method, params = {}) {
+async function callWorker (method, params = {}) {
   const id = crypto.randomUUID()
+  const msg = { id, method, params }
+  const response = await window.bridge.writeWorkerIPC(worker, JSON.stringify(msg))
+  if (response?.error) throw new Error(response.error)
+  if (response?.result) return response.result
   return new Promise((resolve, reject) => {
     pending.set(id, { resolve, reject })
-    window.bridge.writeWorkerIPC(worker, JSON.stringify({ id, method, params }))
   })
 }
 
@@ -24,7 +27,6 @@ function usePearOps () {
   const [ready, setReady] = React.useState(false)
 
   React.useEffect(() => {
-    window.bridge.startWorker(worker)
     const off = window.bridge.onWorkerIPC(worker, data => {
       const text = data.toString()
       let msg
@@ -41,7 +43,9 @@ function usePearOps () {
         else p.resolve(msg.result)
       }
     })
-    callWorker('getState').then(setState).catch(() => {})
+    window.bridge.startWorker(worker)
+      .then(state => { if (state?.incidents) { setState(state); setReady(true) } })
+      .catch(err => { console.error(err); setReady(true) })
     return off
   }, [])
 
