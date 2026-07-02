@@ -185,6 +185,7 @@ textarea { resize: vertical; line-height: 1.55; }
 .badges span { display: inline-flex; align-items: center; min-height: 28px; padding: 0 9px; border: 1px solid var(--cf-border); border-radius: 999px; background: var(--cf-surface-subtle); color: #374151; font-size: 12px; font-weight: 750; text-transform: capitalize; }
 #severity { color: var(--cf-orange-dark); background: var(--cf-orange-soft); border-color: #fed7aa; }
 #status { color: var(--cf-blue); background: var(--cf-blue-soft); border-color: #bfdbfe; }
+#blindPeer.enabled { color: var(--cf-green); background: var(--cf-green-soft); border-color: #bbf7d0; }
 .roomkey-card { display: grid; grid-template-columns: 1fr auto; gap: 10px; align-content: center; padding: 20px; }
 .roomkey-card span { grid-column: 1 / -1; color: var(--cf-muted); font-size: 11px; font-weight: 800; letter-spacing: .08em; text-transform: uppercase; }
 .roomkey-card code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; align-self: center; border: 1px solid #2d3748; border-radius: 7px; padding: 11px 12px; background: #111827; color: #d1fae5; font-size: 12px; }

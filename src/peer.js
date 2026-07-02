@@ -7,6 +7,12 @@ const Hyperswarm = require('hyperswarm')
 const Hyperdrive = require('hyperdrive')
 const b4a = require('b4a')
 
+function parseBlindPeerKeys (value) {
+  if (!value) return []
+  if (Array.isArray(value)) return value.flatMap(parseBlindPeerKeys)
+  return String(value).split(',').map(s => s.trim()).filter(Boolean)
+}
+
 function topicFromRoomKey (roomKey) {
   if (!roomKey) return crypto.randomBytes(32)
   const cleaned = String(roomKey).trim().replace(/^pearops:/, '')
@@ -55,6 +61,11 @@ class PearOpsPeer extends EventEmitter {
     this.knownDrives = new Set()
     this.controlSenders = new Set()
     this.pollTimer = null
+    this.blindPeerKeys = parseBlindPeerKeys(opts.blindPeerKeys || process.env.PEAROPS_BLIND_PEERS)
+    this.blindPeerAnnounce = !!opts.blindPeerAnnounce
+    this.blindPeering = null
+    this.blindRegistered = new Set()
+    this.blindRegistrationErrors = []
 
     // Pear/P2P-specific: a separate replication swarm is dedicated to Corestore.
     // Corestore owns the Hypercore/Hyperdrive protocol stream, while the control
@@ -66,6 +77,8 @@ class PearOpsPeer extends EventEmitter {
     this.controlSwarm.on('connection', (conn, info) => this._onControlConnection(conn, info))
     this.controlSwarm.on('update', () => this.emit('peers', this.peerCount()))
     this.replicationSwarm.on('update', () => this.emit('peers', this.peerCount()))
+
+    if (this.blindPeerKeys.length) this._enableBlindPeering()
   }
 
   peerCount () {
@@ -90,6 +103,8 @@ class PearOpsPeer extends EventEmitter {
     const ownDriveKey = b4a.toString(this.drive.key, 'hex')
     this.knownDrives.add(ownDriveKey)
     this.drives.set(ownDriveKey, this.drive)
+    this._registerBlindCore(this.writer, 'timeline-writer')
+    this._registerBlindDrive(this.drive)
 
     if (create) {
       this.metadata = {
@@ -136,6 +151,7 @@ class PearOpsPeer extends EventEmitter {
       driveKey: b4a.toString(this.drive.key, 'hex')
     }
     await this.postEvent({ eventType: 'update', message: `Attached ${name}`, attachment })
+    await this._registerBlindDrive(this.drive)
     this._broadcastHello()
     return attachment
   }
@@ -169,8 +185,42 @@ class PearOpsPeer extends EventEmitter {
     }
     await this.writer.append(event)
     this._ingest(event)
+    this._registerBlindCore(this.writer, 'timeline-writer')
     this._broadcast({ kind: 'event-hint', writerKey: event.writerKey })
     return event
+  }
+
+  _enableBlindPeering () {
+    if (this.blindPeering || !this.blindPeerKeys.length) return
+    const BlindPeering = require('blind-peering')
+    this.blindPeering = new BlindPeering(this.replicationSwarm.dht, this.store.namespace('blind-peering'), {
+      keys: this.blindPeerKeys
+    })
+  }
+
+  _registerBlindCore (core, label) {
+    if (!this.blindPeering || !core?.key) return
+    const id = `${label}:${b4a.toString(core.key, 'hex')}`
+    if (this.blindRegistered.has(id)) return
+    this.blindRegistered.add(id)
+    this.blindPeering.addCore(core, { announce: this.blindPeerAnnounce }).catch(err => {
+      this.blindRegistered.delete(id)
+      this.blindRegistrationErrors.push({ label, message: err.message, at: new Date().toISOString() })
+      this.blindRegistrationErrors = this.blindRegistrationErrors.slice(-5)
+      this.emit('snapshot', this.snapshot())
+    })
+  }
+
+  async _registerBlindDrive (drive) {
+    if (!this.blindPeering || !drive) return
+    this._registerBlindCore(drive.core, 'attachment-drive-db')
+    try {
+      const blobs = await drive.getBlobs()
+      this._registerBlindCore(blobs.core, 'attachment-drive-blobs')
+    } catch (err) {
+      this.blindRegistrationErrors.push({ label: 'attachment-drive-blobs', message: err.message, at: new Date().toISOString() })
+      this.blindRegistrationErrors = this.blindRegistrationErrors.slice(-5)
+    }
   }
 
   async _addWriter (key) {
@@ -282,14 +332,26 @@ class PearOpsPeer extends EventEmitter {
       peers: this.peerCount(),
       writers: [...this.knownWriters],
       drives: [...this.knownDrives],
+      blindPeer: {
+        enabled: !!this.blindPeering,
+        keys: this.blindPeerKeys,
+        announce: this.blindPeerAnnounce,
+        registeredCores: this.blindRegistered.size,
+        errors: this.blindRegistrationErrors
+      },
       timeline: this.timeline()
     }
   }
 
   async close () {
     if (this.pollTimer) clearInterval(this.pollTimer)
-    await Promise.allSettled([this.controlSwarm.destroy(), this.replicationSwarm.destroy(), this.store.close()])
+    await Promise.allSettled([
+      this.blindPeering && this.blindPeering.close(),
+      this.controlSwarm.destroy(),
+      this.replicationSwarm.destroy(),
+      this.store.close()
+    ])
   }
 }
 
-module.exports = { PearOpsPeer, topicFromRoomKey, roomKeyFromTopic }
+module.exports = { PearOpsPeer, topicFromRoomKey, roomKeyFromTopic, parseBlindPeerKeys }

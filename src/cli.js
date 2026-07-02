@@ -3,14 +3,26 @@ const path = require('path')
 const { PearOpsPeer } = require('./peer')
 
 function getArg (flag, fallback = null) {
-  const i = process.argv.indexOf(flag)
+  const i = process.argv.lastIndexOf(flag)
   return i >= 0 ? process.argv[i + 1] : fallback
+}
+
+function getArgs (flag) {
+  const out = []
+  for (let i = 0; i < process.argv.length; i++) {
+    if (process.argv[i] === flag && process.argv[i + 1]) out.push(process.argv[i + 1])
+  }
+  return out
 }
 
 async function main () {
   const name = getArg('--name', 'CLI')
   const storage = getArg('--storage', path.join(process.cwd(), '.pearops', name))
-  const peer = new PearOpsPeer({ name, storage })
+  const blindPeerKeys = getArgs('--blind-peer')
+    .concat((getArg('--blind-peers', process.env.PEAROPS_BLIND_PEERS || '') || '').split(','))
+    .map(s => s.trim())
+    .filter(Boolean)
+  const peer = new PearOpsPeer({ name, storage, blindPeerKeys, blindPeerAnnounce: process.argv.includes('--blind-peer-announce') })
   const cmd = process.argv[2]
 
   if (cmd === 'create') {

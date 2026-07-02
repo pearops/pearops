@@ -23,6 +23,23 @@ PearOps is a serverless incident war room for engineering teams. When production
 9. Peer B downloads the attachment from the timeline.
 10. Explain catch-up: each peer writes an append-only Hypercore; when a peer reconnects, Corestore replication downloads missing blocks.
 
+## Blind peer extension
+
+For the stretch-goal version, start an always-on mirror before the two responders:
+
+```bash
+npm run blind-peer
+```
+
+Copy the `Listening at ...` key from the blind-peer log, then run responders with:
+
+```bash
+npm run peer:a -- --open --blind-peer <blind-peer-key>
+npm run peer:b -- --open --blind-peer <blind-peer-key>
+```
+
+Call out the new badge in the incident header: PearOps is registering the timeline writer and attachment Hyperdrive cores with a blind peer so known incident data can remain available after the original responder device leaves.
+
 ## Closing line
 
 PearOps shows why Pear is compelling for ops tooling: the room, the timeline, and the evidence are local-first and peer-replicated. The coordination channel survives without Slack, Discord, Google Docs, or a central application server.

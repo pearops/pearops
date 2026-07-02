@@ -14,14 +14,27 @@ function arg (name, fallback) {
   return idx >= 0 ? process.argv[idx + 1] : fallback
 }
 
+function argsAll (name) {
+  const out = []
+  for (let i = 0; i < process.argv.length; i++) {
+    if (process.argv[i] === `--${name}` && process.argv[i + 1]) out.push(process.argv[i + 1])
+  }
+  return out
+}
+
 async function main () {
   const port = Number(arg('port', process.env.PORT || 3911))
   const name = arg('name', os.hostname())
   const storage = arg('storage', path.join(process.cwd(), '.pearops', name))
+  const blindPeerKeys = argsAll('blind-peer')
+    .concat(arg('blind-peers', process.env.PEAROPS_BLIND_PEERS || '').split(','))
+    .map(s => s.trim())
+    .filter(Boolean)
+  const blindPeerAnnounce = process.argv.includes('--blind-peer-announce')
   const openBrowser = process.argv.includes('--open')
   const app = express()
   const upload = multer({ dest: path.join(storage, 'uploads') })
-  const peer = new PearOpsPeer({ name, storage })
+  const peer = new PearOpsPeer({ name, storage, blindPeerKeys, blindPeerAnnounce })
   const clients = new Set()
 
   app.use(express.json())
@@ -102,6 +115,7 @@ async function main () {
     const url = `http://localhost:${port}`
     console.log(`PearOps ${name} listening at ${url}`)
     console.log(`Storage: ${storage}`)
+    if (blindPeerKeys.length) console.log(`Blind peers: ${blindPeerKeys.join(', ')}`)
     if (openBrowser) import('open').then(m => m.default(url)).catch(() => {})
   })
 

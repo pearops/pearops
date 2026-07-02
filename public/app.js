@@ -82,6 +82,8 @@ function render (snap) {
   $('#severity').textContent = meta.severity || 'severity unknown'
   $('#status').textContent = meta.status || 'status unknown'
   $('#peers').textContent = `${snap.peers || 0} peer${snap.peers === 1 ? '' : 's'} connected`
+  $('#blindPeer').textContent = snap.blindPeer?.enabled ? `${snap.blindPeer.registeredCores} blind-peer cores` : 'blind peer off'
+  $('#blindPeer').classList.toggle('enabled', !!snap.blindPeer?.enabled)
   $('#roomKey').textContent = snap.roomKey || ''
   $('#eventCount').textContent = `${snap.timeline.length} event${snap.timeline.length === 1 ? '' : 's'}`
   $('#timeline').innerHTML = snap.timeline.map(renderEvent).join('') || '<li class="empty">No events yet. Post the first update.</li>'
