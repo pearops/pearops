@@ -100,7 +100,11 @@ function ensurePearOpsIdentity () {
 
 function upsertPearOpsIncident (record) {
   const incidents = pearOpsService.localState.incidents
-  const idx = incidents.findIndex(i => i.id === record.id || i.roomKey === record.roomKey)
+  const idx = incidents.findIndex(i => {
+    if (record.id && i.id === record.id) return true
+    if (record.roomKey && i.roomKey === record.roomKey) return true
+    return false
+  })
   if (idx === -1) incidents.unshift(record)
   else incidents[idx] = { ...incidents[idx], ...record }
   pearOpsService.activeIncidentId = record.id
@@ -159,6 +163,8 @@ async function handlePearOpsMethod (method, params = {}) {
     ensurePearOpsIdentity()
     const id = `inc-${Date.now()}-${Math.random().toString(16).slice(2)}`
     if (pearOpsService.peer) await pearOpsService.peer.close().catch(() => {})
+    pearOpsService.activeIncidentId = id
+    pearOpsService.localState.activeIncidentId = id
     pearOpsService.peer = new PearOpsPeer({ name: pearOpsService.localState.settings?.displayName || 'Responder', storage: incidentStorage(id), identityStorage: pearOpsService.identityStorage })
     wirePearOpsPeer(pearOpsService.peer)
     const snap = await pearOpsService.peer.createRoom({ title: params.title, severity: params.severity, status: params.status || 'investigating' })
