@@ -43,7 +43,12 @@ $('#attachForm').addEventListener('submit', async e => {
   const res = await fetch('/api/attach', { method: 'POST', body: fd })
   if (!res.ok) return toast('Attach failed')
   e.target.reset()
+  $('#fileName').textContent = 'Choose file'
   toast('Attachment added to timeline')
+})
+
+$('#evidenceFile').addEventListener('change', e => {
+  $('#fileName').textContent = e.target.files?.[0]?.name || 'Choose file'
 })
 
 for (const btn of document.querySelectorAll('[data-status]')) {

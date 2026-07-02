@@ -4,74 +4,148 @@
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>PearOps</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
-  <main>
-    <section id="home" class="panel hero">
-      <p class="eyebrow">PearOps</p>
-      <h1>Serverless incident war room</h1>
-      <p class="sub">Create a private P2P room, coordinate responders, replicate timeline updates, and share evidence files without Slack, Google Docs, or a backend.</p>
-      <div class="grid two">
-        <form id="createForm" class="card">
-          <h2>Create incident</h2>
-          <label>Title <input name="title" value="Checkout API outage"></label>
-          <label>Severity
-            <select name="severity"><option>SEV1</option><option selected>SEV2</option><option>SEV3</option></select>
-          </label>
-          <button>Create room</button>
-        </form>
-        <form id="joinForm" class="card">
-          <h2>Join incident</h2>
-          <label>Room key <input name="roomKey" placeholder="pearops:..." autocomplete="off"></label>
-          <button>Join room</button>
-        </form>
-      </div>
-    </section>
-
-    <section id="incident" class="hidden">
-      <div class="topbar panel">
+  <div class="app-shell">
+    <header class="global-header">
+      <div class="brand-lockup">
+        <div class="brand-mark">P</div>
         <div>
-          <p class="eyebrow">Incident room</p>
-          <h1 id="title">Untitled incident</h1>
-          <div class="badges"><span id="severity"></span><span id="status"></span><span id="peers"></span></div>
-        </div>
-        <div class="roomkey">
-          <span>Room key</span>
-          <code id="roomKey"></code>
-          <button id="copyKey" type="button">Copy</button>
+          <strong>PearOps</strong>
+          <span>P2P incident command</span>
         </div>
       </div>
+      <nav class="header-nav" aria-label="Product">
+        <a href="https://docs.pears.com" target="_blank" rel="noreferrer">Pear Runtime</a>
+        <a href="https://github.com/holepunchto/hyperswarm" target="_blank" rel="noreferrer">Hyperswarm</a>
+        <span class="live-pill"><span></span> Local-first</span>
+      </nav>
+    </header>
 
-      <div class="grid main-grid">
-        <section class="panel composer">
-          <form id="eventForm">
-            <label>Event type
-              <select name="eventType">
-                <option>update</option><option>investigation</option><option>mitigation</option><option>decision</option><option>resolution</option>
-              </select>
-            </label>
-            <label>Timeline update<textarea name="message" rows="4" placeholder="What changed? What did we learn?"></textarea></label>
-            <button>Post update</button>
-          </form>
-          <form id="attachForm" class="attach">
-            <label>Evidence file <input name="file" type="file"></label>
-            <button>Attach file</button>
-          </form>
-          <div class="status-actions">
-            <button data-status="investigating">Investigating</button>
-            <button data-status="mitigated">Mitigated</button>
-            <button data-status="resolved">Resolved</button>
+    <div class="workspace">
+      <aside class="platform-sidebar" aria-label="PearOps workspace">
+        <div class="sidebar-section-title">War room</div>
+        <a class="sidebar-item active" href="#"><span>●</span> Incidents</a>
+        <a class="sidebar-item" href="#"><span>◇</span> Evidence</a>
+        <a class="sidebar-item" href="#"><span>↻</span> Replication</a>
+        <a class="sidebar-item" href="#"><span>▣</span> Postmortems</a>
+        <div class="sidebar-divider"></div>
+        <div class="sidebar-note">
+          <strong>P2P room</strong>
+          <span>No central backend. Data syncs directly between peers.</span>
+        </div>
+      </aside>
+
+      <main>
+      <section id="home" class="home-view">
+        <div class="hero-copy">
+          <div class="kicker"><span></span> Serverless incident response</div>
+          <h1>Enterprise incident rooms without the enterprise dependency chain.</h1>
+          <p class="sub">Create a private peer-to-peer war room, coordinate responders, replicate timeline updates, and share evidence files without Slack, Google Docs, Discord, or a central backend.</p>
+          <div class="proof-row" aria-label="Capabilities">
+            <div><strong>Hyperswarm</strong><span>Peer discovery</span></div>
+            <div><strong>Hypercore</strong><span>Append-only timeline</span></div>
+            <div><strong>Hyperdrive</strong><span>P2P evidence files</span></div>
           </div>
-          <button id="exportBtn" class="secondary">Export Markdown report</button>
-        </section>
-        <section class="panel timeline-panel">
-          <div class="section-head"><h2>Timeline</h2><span id="eventCount">0 events</span></div>
-          <ol id="timeline" class="timeline"></ol>
-        </section>
-      </div>
-    </section>
-  </main>
+        </div>
+
+        <div class="launch-panel">
+          <div class="panel-head">
+            <div>
+              <p class="eyebrow">Launch console</p>
+              <h2>Start or join a room</h2>
+            </div>
+            <span class="secure-chip">No backend</span>
+          </div>
+          <div class="launch-grid">
+            <form id="createForm" class="action-card primary-card">
+              <div class="card-icon">+</div>
+              <h3>Create incident</h3>
+              <p>Generate a new private room topic for responders.</p>
+              <label>Incident title <input name="title" value="Checkout API outage"></label>
+              <label>Severity
+                <select name="severity"><option>SEV1</option><option selected>SEV2</option><option>SEV3</option></select>
+              </label>
+              <button class="btn btn-primary">Create room</button>
+            </form>
+            <form id="joinForm" class="action-card">
+              <div class="card-icon muted">↗</div>
+              <h3>Join existing</h3>
+              <p>Paste a pearops room key and sync the replicated incident timeline.</p>
+              <label>Room key <input name="roomKey" placeholder="pearops:..." autocomplete="off"></label>
+              <button class="btn btn-secondary">Join room</button>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section id="incident" class="incident-view hidden">
+        <div class="incident-commandbar">
+          <div class="incident-title-block">
+            <p class="eyebrow">Incident command center</p>
+            <h1 id="title">Untitled incident</h1>
+            <div class="badges"><span id="severity"></span><span id="status"></span><span id="peers"></span></div>
+          </div>
+          <div class="roomkey-card">
+            <span>Room key</span>
+            <code id="roomKey"></code>
+            <button id="copyKey" class="btn btn-ghost" type="button">Copy key</button>
+          </div>
+        </div>
+
+        <div class="ops-grid">
+          <aside class="command-panel panel">
+            <div class="section-head compact"><div><p class="eyebrow">Responder actions</p><h2>Post update</h2></div></div>
+            <form id="eventForm" class="stack-form">
+              <label>Event type
+                <select name="eventType">
+                  <option>update</option><option>investigation</option><option>mitigation</option><option>decision</option><option>resolution</option>
+                </select>
+              </label>
+              <label>Timeline update<textarea name="message" rows="5" placeholder="Summarise the observation, action, or decision..."></textarea></label>
+              <button class="btn btn-primary">Post update</button>
+            </form>
+
+            <form id="attachForm" class="stack-form divider">
+              <label class="file-drop">
+                <span class="file-drop-title">Evidence file</span>
+                <input id="evidenceFile" name="file" type="file">
+                <span id="fileName" class="file-drop-control">Choose file</span>
+                <small>Logs, screenshots, runbooks, or JSON dumps</small>
+              </label>
+              <button class="btn btn-ghost attach-btn">Attach evidence</button>
+            </form>
+
+            <div class="divider">
+              <p class="mini-label">Status transition</p>
+              <div class="status-actions">
+                <button class="btn btn-ghost" data-status="investigating">Investigating</button>
+                <button class="btn btn-ghost" data-status="mitigated">Mitigated</button>
+                <button class="btn btn-ghost" data-status="resolved">Resolved</button>
+              </div>
+            </div>
+            <button id="exportBtn" class="btn btn-outline">Export Markdown report</button>
+          </aside>
+
+          <section class="timeline-panel panel">
+            <div class="section-head">
+              <div>
+                <p class="eyebrow">Replicated log</p>
+                <h2>Incident timeline</h2>
+              </div>
+              <span id="eventCount" class="count-pill">0 events</span>
+            </div>
+            <ol id="timeline" class="timeline"></ol>
+          </section>
+        </div>
+      </section>
+      </main>
+    </div>
+  </div>
   <div id="toast"></div>
   <script src="/app.js"></script>
 </body>
