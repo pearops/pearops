@@ -1,5 +1,7 @@
 # PearOps
 
+![Banner](./banner.png)
+
 **PearOps is a serverless incident war room for engineering teams.** When production is down, coordination should not depend on another centralized SaaS. PearOps lets responders create a private peer-to-peer room, share timeline updates and evidence files, and let late joiners catch up through replicated local-first data.
 
 This is a hackathon MVP built with Pear/Holepunch building blocks:
