@@ -7,7 +7,7 @@ const goodbye = require('graceful-goodbye')
 const FramedStream = require('framed-stream')
 
 const { PearOpsPeer } = require('../src/peer')
-const { createKeetIdentity, identityStatus } = require('../src/identity')
+const { createKeetIdentity, identityStatus, exportMnemonic, restoreMnemonic } = require('../src/identity')
 
 const pipe = new FramedStream(Bare.IPC)
 
@@ -146,6 +146,22 @@ async function setupIdentity (payload = {}) {
   return { ...snapshot(), generatedMnemonic: payload.mnemonic ? null : bundle.mnemonic }
 }
 
+async function createIdentity (payload = {}) {
+  const bundle = await createKeetIdentity(identityStorage)
+  await refreshIdentity()
+  return { ...snapshot(), generatedMnemonic: bundle.mnemonic }
+}
+
+async function exportIdentity () {
+  return await exportMnemonic(identityStorage)
+}
+
+async function restoreIdentity (payload = {}) {
+  await restoreMnemonic(identityStorage, payload.mnemonic)
+  await refreshIdentity()
+  return snapshot()
+}
+
 async function handle (msg) {
   if (msg.type === 'pear:applyUpdate') {
     await pear.updater.applyUpdate()
@@ -157,6 +173,9 @@ async function handle (msg) {
     let result
     if (method === 'getState') result = snapshot()
     else if (method === 'setupIdentity') result = await setupIdentity(params)
+    else if (method === 'createIdentity') result = await createIdentity(params)
+    else if (method === 'exportIdentity') result = await exportIdentity()
+    else if (method === 'restoreIdentity') result = await restoreIdentity(params)
     else if (method === 'createIncident') result = await createIncident(params)
     else if (method === 'joinIncident') result = await joinIncident(params)
     else if (method === 'selectIncident') {

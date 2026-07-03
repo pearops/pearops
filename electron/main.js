@@ -9,7 +9,7 @@ const { isMac, isLinux, isWindows } = require('which-runtime')
 const { command, flag } = require('paparam')
 const pkg = require('../package.json')
 const { PearOpsPeer } = require('../src/peer')
-const { createKeetIdentity, identityStatus } = require('../src/identity')
+const { createKeetIdentity, identityStatus, exportMnemonic, restoreMnemonic } = require('../src/identity')
 const { name, productName, version, upgrade } = pkg
 
 const protocol = name
@@ -203,6 +203,19 @@ async function handlePearOpsMethod (method, params = {}) {
     const bundle = await createKeetIdentity(pearOpsService.identityStorage, { mnemonic: params.mnemonic })
     await refreshPearOpsIdentity()
     return { ...pearOpsSnapshot(), generatedMnemonic: params.mnemonic ? null : bundle.mnemonic }
+  }
+  if (method === 'createIdentity') {
+    const bundle = await createKeetIdentity(pearOpsService.identityStorage)
+    await refreshPearOpsIdentity()
+    return { ...pearOpsSnapshot(), generatedMnemonic: bundle.mnemonic }
+  }
+  if (method === 'exportIdentity') {
+    return await exportMnemonic(pearOpsService.identityStorage)
+  }
+  if (method === 'restoreIdentity') {
+    await restoreMnemonic(pearOpsService.identityStorage, params.mnemonic)
+    await refreshPearOpsIdentity()
+    return pearOpsSnapshot()
   }
   if (method === 'createIncident') {
     ensurePearOpsIdentity()

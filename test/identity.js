@@ -2,7 +2,7 @@ const assert = require('assert')
 const fs = require('fs')
 const os = require('os')
 const path = require('path')
-const { createKeetIdentity, identityStatus, proofToJSON } = require('../src/identity')
+const { createKeetIdentity, identityStatus, exportMnemonic, restoreMnemonic, normalizeMnemonic, proofToJSON } = require('../src/identity')
 
 ;(async () => {
   const storage = fs.mkdtempSync(path.join(os.tmpdir(), 'pearops-identity-'))
@@ -24,5 +24,25 @@ const { createKeetIdentity, identityStatus, proofToJSON } = require('../src/iden
   const proof = proofToJSON(a.sign(payload))
   assert.equal(a.verify(proof, payload, a.identityPublicKey), true, 'signed event verifies against Keet identity public key')
   assert.equal(a.verify(proof, { ...payload, message: 'tampered' }, a.identityPublicKey), false, 'tampered event fails verification')
-  console.log(JSON.stringify({ ok: true, identityPublicKey: a.identityPublicKey.slice(0, 16) + '…', restored: true }))
+
+  const exported = await exportMnemonic(storage)
+  assert.equal(exported.mnemonic, a.mnemonic, 'export returns original mnemonic')
+  assert.equal(exported.identityPublicKey, a.identityPublicKey, 'export returns matching identity public key')
+
+  const normalized = normalizeMnemonic('  word1   word2  word3  ')
+  assert.equal(normalized, 'word1 word2 word3', 'normalizeMnemonic trims and collapses whitespace')
+  assert.throws(() => normalizeMnemonic(''), /Recovery phrase is required/, 'normalizeMnemonic rejects empty string')
+  assert.throws(() => normalizeMnemonic('   '), /Recovery phrase is required/, 'normalizeMnemonic rejects whitespace-only')
+
+  const doubleRestoreStorage = fs.mkdtempSync(path.join(os.tmpdir(), 'pearops-identity-double-'))
+  await restoreMnemonic(doubleRestoreStorage, a.mnemonic)
+  await assert.rejects(
+    () => restoreMnemonic(doubleRestoreStorage, a.mnemonic),
+    /Identity is already configured/,
+    'restore refuses overwrite when identity exists'
+  )
+  const overwritten = await restoreMnemonic(doubleRestoreStorage, a.mnemonic, { overwrite: true })
+  assert.equal(overwritten.identityPublicKey, a.identityPublicKey, 'restore with overwrite replaces existing identity')
+
+  console.log(JSON.stringify({ ok: true, identityPublicKey: a.identityPublicKey.slice(0, 16) + '…', exported: true, restored: true }))
 })().catch(err => { console.error(err); process.exit(1) })

@@ -69,4 +69,45 @@ function proofToJSON (proof) {
   return Buffer.from(proof).toString('hex')
 }
 
-module.exports = { createKeetIdentity, identityStatus, readMnemonic, proofToJSON }
+async function exportMnemonic (storage) {
+  const mnemonic = await readMnemonic(storage)
+  if (!mnemonic) throw new Error('Identity is not configured')
+  const identity = await Identity.from({ mnemonic })
+  return {
+    mnemonic,
+    identityPublicKey: b4a.toString(identity.identityPublicKey, 'hex')
+  }
+}
+
+async function restoreMnemonic (storage, mnemonic, opts = {}) {
+  fs.mkdirSync(storage, { recursive: true })
+  const normalized = normalizeMnemonic(mnemonic)
+
+  const identity = await Identity.from({ mnemonic: normalized })
+  const mnemonicPath = identityMnemonicPath(storage)
+
+  if (!opts.overwrite) {
+    const existing = await readMnemonic(storage)
+    if (existing) throw new Error('Identity is already configured. Use overwrite option to replace.')
+  }
+
+  const tmp = mnemonicPath + '.tmp'
+  await fs.promises.writeFile(tmp, normalized, { mode: 0o600 })
+  await fs.promises.rename(tmp, mnemonicPath)
+  await fs.promises.chmod(mnemonicPath, 0o600).catch(() => {})
+
+  return {
+    configured: true,
+    mnemonicPath,
+    identityPublicKey: b4a.toString(identity.identityPublicKey, 'hex')
+  }
+}
+
+function normalizeMnemonic (mnemonic) {
+  if (typeof mnemonic !== 'string') throw new Error('Recovery phrase is required')
+  const normalized = mnemonic.trim().replace(/\s+/g, ' ')
+  if (!normalized) throw new Error('Recovery phrase is required')
+  return normalized
+}
+
+module.exports = { createKeetIdentity, identityStatus, readMnemonic, proofToJSON, exportMnemonic, restoreMnemonic, normalizeMnemonic }

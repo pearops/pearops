@@ -78,6 +78,17 @@ function App () {
     } finally { setBusy(false) }
   }
 
+  async function call (method, params = {}) {
+    setBusy(true)
+    try {
+      const result = await callWorker(method, params)
+      return result
+    } catch (err) {
+      alert(err.message)
+      return null
+    } finally { setBusy(false) }
+  }
+
   React.useEffect(() => {
     if (settings.defaultEventType && eventTypes.includes(settings.defaultEventType)) setEventType(settings.defaultEventType)
   }, [settings.defaultEventType])
@@ -111,8 +122,8 @@ function App () {
     </header>
 
     {!ready && <main className="onboarding-shell"><Card><CardContent>Starting Pear Runtime worker…</CardContent></Card></main>}
-    {ready && !identity.configured && <Onboarding busy={busy} run={run} setState={setState} identity={identity}/>} 
-    {ready && identity.configured && page === 'settings' && <SettingsPage state={state} run={run} />}
+    {ready && !identity.configured && <IdentitySetup busy={busy} call={call} setState={setState} identity={identity}/>}
+    {ready && identity.configured && page === 'settings' && <SettingsPage state={state} run={run} call={call} />}
     {ready && identity.configured && page === 'incidents' && <div className="workspace">
       <aside className="incident-sidebar">
         <div className="sidebar-top">
@@ -165,7 +176,7 @@ function App () {
   </div>
 }
 
-function Onboarding ({ busy, run, setState, identity }) {
+function IdentitySetup ({ busy, call, setState, identity }) {
   const [mode, setMode] = React.useState('create')
   const [mnemonic, setMnemonic] = React.useState('')
   const [generated, setGenerated] = React.useState(null)
@@ -173,7 +184,9 @@ function Onboarding ({ busy, run, setState, identity }) {
 
   async function submit (event) {
     event.preventDefault()
-    const result = await run(() => callWorker('setupIdentity', mode === 'restore' ? { mnemonic: mnemonic.trim() } : {}))
+    const result = mode === 'restore'
+      ? await call('restoreIdentity', { mnemonic: mnemonic.trim() })
+      : await call('createIdentity')
     if (!result) return
     if (result.generatedMnemonic) {
       setNextState({ ...result, generatedMnemonic: undefined })
@@ -273,7 +286,7 @@ function TimelineEvent ({ event }) {
   </article>
 }
 
-function SettingsPage ({ state, run }) {
+function SettingsPage ({ state, run, call }) {
   const settings = state.settings || {}
   const identity = state.identity || {}
   const app = state.app || {}
@@ -287,6 +300,8 @@ function SettingsPage ({ state, run }) {
     discoveryFlushTimeout: settings.discoveryFlushTimeout || 250,
     blindPeers: settings.blindPeers || ''
   })
+  const [exportedMnemonic, setExportedMnemonic] = React.useState(null)
+  const [exportBusy, setExportBusy] = React.useState(false)
 
   React.useEffect(() => {
     setForm({
@@ -309,6 +324,16 @@ function SettingsPage ({ state, run }) {
       ...form,
       discoveryFlushTimeout: Number(form.discoveryFlushTimeout) || 250
     }))
+  }
+
+  async function handleExport () {
+    setExportBusy(true)
+    try {
+      const result = await call('exportIdentity')
+      if (result?.mnemonic) setExportedMnemonic(result.mnemonic)
+    } finally {
+      setExportBusy(false)
+    }
   }
 
   return <main className="settings-page">
@@ -345,6 +370,23 @@ function SettingsPage ({ state, run }) {
           <label>Theme<select value={form.theme} onChange={e => setField('theme', e.target.value)}><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label>
           <label>Density<select value={form.compact ? 'compact' : 'comfortable'} onChange={e => setField('compact', e.target.value === 'compact')}><option value="compact">Compact</option><option value="comfortable">Comfortable</option></select></label>
           <label className="check-row"><input type="checkbox" checked={form.notifications} onChange={e => setField('notifications', e.target.checked)} /> Enable local notifications</label>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader><CardTitle><KeyRound size={16}/> Identity recovery</CardTitle></CardHeader>
+        <CardContent className="settings-section">
+          <div className="readonly-row"><span>Identity public key</span><code>{short(identity.identityPublicKey || 'not configured', 24)}</code></div>
+          <p className="setting-note">Export your recovery phrase to restore this PearOps identity on another device. Anyone with this phrase can use your identity.</p>
+          {!exportedMnemonic
+            ? <Button type="button" variant="outline" disabled={exportBusy} onClick={handleExport}><KeyRound size={14}/> Export recovery phrase</Button>
+            : <>
+                <pre className="mnemonic-box">{exportedMnemonic}</pre>
+                <div className="settings-actions">
+                  <Button type="button" variant="outline" onClick={() => navigator.clipboard?.writeText(exportedMnemonic)}><Copy size={14}/> Copy</Button>
+                  <Button type="button" variant="ghost" onClick={() => setExportedMnemonic(null)}>Hide</Button>
+                </div>
+              </>}
         </CardContent>
       </Card>
 
