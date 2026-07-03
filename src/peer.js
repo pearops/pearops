@@ -1,5 +1,4 @@
 const EventEmitter = require('events')
-const crypto = require('crypto')
 const fs = require('fs')
 const path = require('path')
 const Corestore = require('corestore')
@@ -7,40 +6,9 @@ const Hyperswarm = require('hyperswarm')
 const Hyperdrive = require('hyperdrive')
 const b4a = require('b4a')
 const { createKeetIdentity, proofToJSON } = require('./identity')
-
-function parseBlindPeerKeys (value) {
-  if (!value) return []
-  if (Array.isArray(value)) return value.flatMap(parseBlindPeerKeys)
-  return String(value).split(',').map(s => s.trim()).filter(Boolean)
-}
-
-function topicFromRoomKey (roomKey) {
-  if (!roomKey) return crypto.randomBytes(32)
-  const cleaned = String(roomKey).trim().replace(/^pearops:/, '')
-  if (/^[0-9a-f]{64}$/i.test(cleaned)) return Buffer.from(cleaned, 'hex')
-  return crypto.createHash('sha256').update(cleaned).digest()
-}
-
-function roomKeyFromTopic (topic) {
-  return `pearops:${b4a.toString(topic, 'hex')}`
-}
-
-function jsonLineSocket (socket, onMessage) {
-  let buffer = ''
-  socket.on('data', data => {
-    buffer += data.toString('utf8')
-    let idx
-    while ((idx = buffer.indexOf('\n')) >= 0) {
-      const line = buffer.slice(0, idx).trim()
-      buffer = buffer.slice(idx + 1)
-      if (!line) continue
-      try { onMessage(JSON.parse(line)) } catch {}
-    }
-  })
-  return obj => {
-    if (!socket.destroyed) socket.write(JSON.stringify(obj) + '\n')
-  }
-}
+const { topicFromRoomKey, roomKeyFromTopic } = require('./p2p/room-key')
+const { parseBlindPeerKeys } = require('./p2p/blind-peers')
+const { jsonLineSocket } = require('./p2p/json-line-socket')
 
 class PearOpsPeer extends EventEmitter {
   constructor (opts = {}) {

@@ -10,6 +10,9 @@ const { command, flag } = require('paparam')
 const pkg = require('../package.json')
 const { PearOpsPeer } = require('../src/peer')
 const { createKeetIdentity, identityStatus, exportMnemonic, restoreMnemonic } = require('../src/identity')
+const { defaultSettings, normalizeSettings, parseDiscoveryFlushTimeout } = require('../src/app/settings')
+const { loadLocalState: loadStateFile, saveLocalState: saveStateFile } = require('../src/app/local-state')
+const { createIncidentId, upsertIncident, removeIncident, findIncident } = require('../src/app/incidents')
 const { name, productName, version, upgrade } = pkg
 
 const protocol = name
@@ -63,31 +66,20 @@ const pearOpsService = {
   stateTimer: null
 }
 
-function defaultSettings () {
-  return {
-    displayName: 'Responder',
-    notifications: true,
-    compact: true,
-    theme: 'system',
-    defaultSeverity: 'SEV-2',
-    defaultEventType: 'update',
-    discoveryFlushTimeout: 250,
-    blindPeers: ''
-  }
-}
-
 function loadLocalState () {
-  try {
-    const state = JSON.parse(fs.readFileSync(pearOpsService.stateFile, 'utf8'))
-    return { ...state, settings: { ...defaultSettings(), ...(state.settings || {}) } }
-  } catch {
-    return { incidents: [], settings: defaultSettings() }
+  const state = loadStateFile(pearOpsService.stateFile, {
+    incidents: [],
+    settings: defaultSettings()
+  })
+  return {
+    ...state,
+    incidents: state.incidents || [],
+    settings: normalizeSettings(state.settings || {})
   }
 }
 
 function saveLocalState () {
-  fs.mkdirSync(pearOpsService.appStorage, { recursive: true })
-  fs.writeFileSync(pearOpsService.stateFile, JSON.stringify(pearOpsService.localState, null, 2))
+  saveStateFile(pearOpsService.stateFile, pearOpsService.localState)
 }
 
 function pearOpsSnapshot () {
@@ -129,14 +121,7 @@ function ensurePearOpsIdentity () {
 }
 
 function upsertPearOpsIncident (record) {
-  const incidents = pearOpsService.localState.incidents
-  const idx = incidents.findIndex(i => {
-    if (record.id && i.id === record.id) return true
-    if (record.roomKey && i.roomKey === record.roomKey) return true
-    return false
-  })
-  if (idx === -1) incidents.unshift(record)
-  else incidents[idx] = { ...incidents[idx], ...record }
+  pearOpsService.localState.incidents = upsertIncident(pearOpsService.localState.incidents, record)
   pearOpsService.activeIncidentId = record.id
   pearOpsService.localState.activeIncidentId = record.id
   saveLocalState()
@@ -169,12 +154,12 @@ function wirePearOpsPeer (peer) {
 }
 
 function activePeerOptions (incidentId) {
-  const settings = pearOpsService.localState.settings || defaultSettings()
+  const settings = normalizeSettings(pearOpsService.localState.settings || {})
   return {
     name: settings.displayName || 'Responder',
     storage: incidentStorage(incidentId),
     identityStorage: pearOpsService.identityStorage,
-    discoveryFlushTimeout: Number(settings.discoveryFlushTimeout) || 250,
+    discoveryFlushTimeout: parseDiscoveryFlushTimeout(settings.discoveryFlushTimeout),
     blindPeerKeys: settings.blindPeers || ''
   }
 }
@@ -219,7 +204,7 @@ async function handlePearOpsMethod (method, params = {}) {
   }
   if (method === 'createIncident') {
     ensurePearOpsIdentity()
-    const id = `inc-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    const id = createIncidentId()
     if (pearOpsService.peer) await pearOpsService.peer.close().catch(() => {})
     pearOpsService.activeIncidentId = id
     pearOpsService.localState.activeIncidentId = id
@@ -234,7 +219,7 @@ async function handlePearOpsMethod (method, params = {}) {
   }
   if (method === 'joinIncident') {
     ensurePearOpsIdentity()
-    const id = `inc-${Date.now()}-${Math.random().toString(16).slice(2)}`
+    const id = createIncidentId()
     const record = { id, roomKey: params.roomKey, title: params.title || 'Joined incident', severity: params.severity || 'SEV2', status: 'joined', joinedAt: new Date().toISOString(), updatedAt: new Date().toISOString() }
     upsertPearOpsIncident(record)
     await openPearOpsIncident(record)
@@ -244,13 +229,13 @@ async function handlePearOpsMethod (method, params = {}) {
     return pearOpsSnapshot()
   }
   if (method === 'selectIncident') {
-    const incident = pearOpsService.localState.incidents.find(i => i.id === params.id)
+    const incident = findIncident(pearOpsService.localState.incidents, params.id)
     if (!incident) throw new Error('incident not found')
     await openPearOpsIncident(incident)
     return pearOpsSnapshot()
   }
   if (method === 'removeIncident') {
-    pearOpsService.localState.incidents = pearOpsService.localState.incidents.filter(i => i.id !== params.id)
+    pearOpsService.localState.incidents = removeIncident(pearOpsService.localState.incidents, params.id)
     if (pearOpsService.activeIncidentId === params.id) {
       pearOpsService.activeIncidentId = null
       pearOpsService.localState.activeIncidentId = null
@@ -272,8 +257,7 @@ async function handlePearOpsMethod (method, params = {}) {
     return pearOpsSnapshot()
   }
   if (method === 'saveSettings') {
-    const nextSettings = { ...defaultSettings(), ...(pearOpsService.localState.settings || {}), ...params }
-    nextSettings.discoveryFlushTimeout = Math.max(50, Math.min(2500, Number(nextSettings.discoveryFlushTimeout) || 250))
+    const nextSettings = normalizeSettings(params, pearOpsService.localState.settings || {})
     pearOpsService.localState.settings = nextSettings
     if (pearOpsService.peer) pearOpsService.peer.name = nextSettings.displayName || 'Responder'
     saveLocalState(); sendPearOpsStateNow(); return pearOpsSnapshot()

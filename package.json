@@ -14,8 +14,8 @@
     "start": "npm run build:renderer && electron-forge start -- --no-updates",
     "start:dev": "concurrently -k \"npm:dev\" \"wait-on tcp:5173 && cross-env PEAR_DEV_SERVER_URL=http://127.0.0.1:5173 electron-forge start -- --no-updates\"",
     "build:renderer": "vite build",
-    "lint": "node -c src/peer.js && node -c src/identity.js && node -c workers/main.js && npm run build:renderer",
-    "test": "node test/identity.js && node test/state.js",
+    "lint": "node -c electron/main.js && node -c electron/preload.js && node -c src/peer.js && node -c src/identity.js && node -c workers/main.js && node -c src/p2p/room-key.js && node -c src/p2p/blind-peers.js && node -c src/p2p/json-line-socket.js && node -c src/app/settings.js && node -c src/app/local-state.js && node -c src/app/incidents.js && npm run build:renderer",
+    "test": "node test/identity.js && node test/state.js && node test/p2p-utils.js && node test/pearops-client.mjs && node test/app-settings.js && node test/local-state.js && node test/incidents.js",
     "smoke": "node test/smoke.js",
     "package": "npm run build:renderer && electron-forge package",
     "make": "npm run build:renderer && electron-forge make"
