@@ -9,6 +9,7 @@ const { createKeetIdentity, proofToJSON } = require('./identity')
 const { topicFromRoomKey, roomKeyFromTopic } = require('./p2p/room-key')
 const { parseBlindPeerKeys } = require('./p2p/blind-peers')
 const { jsonLineSocket } = require('./p2p/json-line-socket')
+const { createIncidentDeclaration, normalizeSeverity, normalizeLifecycleState, transitionIncidentState } = require('./app/incidents')
 
 class PearOpsPeer extends EventEmitter {
   constructor (opts = {}) {
@@ -59,11 +60,11 @@ class PearOpsPeer extends EventEmitter {
     return Math.max(this.controlSwarm.connections.size, this.replicationSwarm.connections.size)
   }
 
-  async createRoom ({ title, severity = 'SEV2', status = 'investigating' }) {
-    return this.joinRoom({ title, severity, status, create: true })
+  async createRoom ({ title, severity = 'SEV-2', description, affectedServices, declaredBy }) {
+    return this.joinRoom({ title, severity, description, affectedServices, declaredBy, create: true })
   }
 
-  async joinRoom ({ roomKey, title, severity, status, create = false }) {
+  async joinRoom ({ roomKey, title, severity, description, affectedServices, declaredBy, create = false }) {
     if (!this.identityBundle) this.identityBundle = await createKeetIdentity(this.identityStorage, { requireExisting: true })
     this.roomTopic = topicFromRoomKey(create ? null : roomKey)
     this.roomKey = roomKeyFromTopic(this.roomTopic)
@@ -82,14 +83,21 @@ class PearOpsPeer extends EventEmitter {
     this._registerBlindDrive(this.drive)
 
     if (create) {
+      // Use new incident declaration helper for rich metadata
+      const incident = createIncidentDeclaration({
+        title,
+        description: description || '',
+        severity: normalizeSeverity(severity, 'SEV-2'),
+        affectedServices,
+        declaredBy: declaredBy || this.name,
+        now: new Date().toISOString()
+      })
       this.metadata = {
-        title: title || 'Untitled incident',
-        severity,
-        status,
-        createdAt: new Date().toISOString(),
-        creator: this.name
+        ...incident,
+        roomId: this.roomKey
+        // Severity definitions served by /api/severities for configurable overrides
       }
-      await this._append({ type: 'room-meta', message: `Incident created: ${this.metadata.title}`, metadata: this.metadata })
+      await this._append({ type: 'room-meta', eventType: 'incident-declared', message: `Incident declared: ${this.metadata.title} (${this.metadata.severity})`, metadata: this.metadata })
     }
 
     const c = this.controlSwarm.join(this.roomTopic, { client: true, server: true })
@@ -143,8 +151,14 @@ class PearOpsPeer extends EventEmitter {
   }
 
   async setStatus (status) {
-    this.metadata = { ...(this.metadata || {}), status }
-    return this._append({ type: 'status', eventType: 'decision', message: `Status changed to ${status}`, metadata: this.metadata })
+    const normalizedState = normalizeLifecycleState(status)
+    const previousState = this.metadata?.state || this.metadata?.status || 'declared'
+    if (this.metadata) {
+      this.metadata = transitionIncidentState(this.metadata, normalizedState, this.name)
+    } else {
+      this.metadata = { ...(this.metadata || {}), status: normalizedState, state: normalizedState }
+    }
+    return this._append({ type: 'status', eventType: 'state-transition', message: `State changed from ${previousState} to ${normalizedState}`, metadata: this.metadata })
   }
 
   async _append (partial) {

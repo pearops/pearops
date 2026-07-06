@@ -57,27 +57,39 @@
           <div class="panel-head">
             <div>
               <p class="eyebrow">Launch console</p>
-              <h2>Start or join a room</h2>
+              <h2>Declare or join an incident</h2>
             </div>
             <span class="secure-chip">No backend</span>
           </div>
           <div class="launch-grid">
             <form id="createForm" class="action-card primary-card">
               <div class="card-icon">+</div>
-              <h3>Create incident</h3>
-              <p>Generate a new private room topic for responders.</p>
-              <label>Incident title <input name="title" value="Checkout API outage"></label>
-              <label>Severity
-                <select name="severity"><option>SEV1</option><option selected>SEV2</option><option>SEV3</option></select>
+              <h3>Declare incident</h3>
+              <p>Generate a new private room with severity, description, and affected services.</p>
+              <label>Incident title <input name="title" value="Checkout API outage" required></label>
+              <label>Description
+                <textarea name="description" rows="3" placeholder="Brief description of the incident..."></textarea>
               </label>
-              <button class="btn btn-primary">Create room</button>
+              <label>Severity
+                <select name="severity">
+                  <option value="SEV-0">SEV-0 — Critical (immediate response)</option>
+                  <option value="SEV-1">SEV-1 — High (15 min response)</option>
+                  <option value="SEV-2" selected>SEV-2 — Medium (1 hour response)</option>
+                  <option value="SEV-3">SEV-3 — Low (4 hour response)</option>
+                </select>
+              </label>
+              <div id="severityDefinitions" class="severity-definitions-container"></div>
+              <label>Affected services (comma-separated)
+                <input name="affectedServices" placeholder="checkout-api, payment-service, user-auth">
+              </label>
+              <button class="btn btn-primary" type="submit">Declare incident</button>
             </form>
             <form id="joinForm" class="action-card">
               <div class="card-icon muted">↗</div>
               <h3>Join existing</h3>
               <p>Paste a pearops room key and sync the replicated incident timeline.</p>
               <label>Room key <input name="roomKey" placeholder="pearops:..." autocomplete="off"></label>
-              <button class="btn btn-secondary">Join room</button>
+              <button class="btn btn-secondary" type="submit">Join room</button>
             </form>
           </div>
         </div>
@@ -88,12 +100,21 @@
           <div class="incident-title-block">
             <p class="eyebrow">Incident command center</p>
             <h1 id="title">Untitled incident</h1>
-            <div class="badges"><span id="severity"></span><span id="status"></span><span id="peers"></span><span id="blindPeer"></span></div>
+            <div class="badges">
+              <span id="severity"></span>
+              <span id="state"></span>
+              <span id="peers"></span>
+              <span id="blindPeer"></span>
+            </div>
+            <div id="incident-meta" class="incident-meta"></div>
+            <div id="incident-roles" class="incident-roles"></div>
+            <div id="incident-artifacts" class="incident-artifacts"></div>
+            <div id="artifactSections" class="artifact-sections"></div>
           </div>
           <div class="roomkey-card">
             <span>Room key</span>
             <code id="roomKey"></code>
-            <button id="copyKey" class="btn btn-ghost" type="button">Copy key</button>
+            <button id="copyKey" class="btn btn-ghost" type="button">Copy invite key</button>
           </div>
         </div>
 
@@ -107,7 +128,7 @@
                 </select>
               </label>
               <label>Timeline update<textarea name="message" rows="5" placeholder="Summarise the observation, action, or decision..."></textarea></label>
-              <button class="btn btn-primary">Post update</button>
+              <button class="btn btn-primary" type="submit">Post update</button>
             </form>
 
             <form id="attachForm" class="stack-form divider">
@@ -117,15 +138,17 @@
                 <span id="fileName" class="file-drop-control">Choose file</span>
                 <small>Logs, screenshots, runbooks, or JSON dumps</small>
               </label>
-              <button class="btn btn-ghost attach-btn">Attach evidence</button>
+              <button class="btn btn-ghost attach-btn" type="submit">Attach evidence</button>
             </form>
 
             <div class="divider">
-              <p class="mini-label">Status transition</p>
+              <p class="mini-label">Lifecycle state transition</p>
               <div class="status-actions">
-                <button class="btn btn-ghost" data-status="investigating">Investigating</button>
-                <button class="btn btn-ghost" data-status="mitigated">Mitigated</button>
-                <button class="btn btn-ghost" data-status="resolved">Resolved</button>
+                <button class="btn btn-ghost" data-state="triaging">Triaging</button>
+                <button class="btn btn-ghost" data-state="mitigated">Mitigated</button>
+                <button class="btn btn-ghost" data-state="resolved">Resolved</button>
+                <button class="btn btn-ghost" data-state="closed">Closed</button>
+                <button class="btn btn-ghost" data-state="declared">Reopen</button>
               </div>
             </div>
             <button id="exportBtn" class="btn btn-outline">Export Markdown report</button>
