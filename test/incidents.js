@@ -16,7 +16,15 @@ const {
   getAllIncidentStates,
   INCIDENT_STATES,
   SEVERITY_DEFINITIONS,
-  VALID_TRANSITIONS
+  VALID_TRANSITIONS,
+  INCIDENT_ROLES,
+  normalizeIncidentRole,
+  getIncidentRole,
+  getAllIncidentRoles,
+  createEmptyRoleAssignments,
+  deriveRoleAssignments,
+  getMissingRequiredRoles,
+  createRoleAssignmentEvent
 } = require('../src/app/incidents')
 
 let passed = 0
@@ -218,6 +226,195 @@ test('getAllSeverityDefinitions returns all 4 severities', () => {
 test('getAllIncidentStates returns all 5 states', () => {
   const states = getAllIncidentStates()
   assert.deepEqual(states, ['declared', 'triaging', 'mitigated', 'resolved', 'closed'])
+})
+
+// INCIDENT_ROLES
+test('INCIDENT_ROLES has all 5 required roles', () => {
+  assert.strictEqual(Object.keys(INCIDENT_ROLES).length, 5)
+  assert.ok(INCIDENT_ROLES.incident_commander)
+  assert.ok(INCIDENT_ROLES.ops_lead)
+  assert.ok(INCIDENT_ROLES.communications_lead)
+  assert.ok(INCIDENT_ROLES.scribe)
+  assert.ok(INCIDENT_ROLES.technical_lead)
+})
+
+test('INCIDENT_ROLES each have required fields', () => {
+  for (const [roleId, role] of Object.entries(INCIDENT_ROLES)) {
+    assert.ok(role.id, `${roleId} has id`)
+    assert.ok(role.name, `${roleId} has name`)
+    assert.ok(Array.isArray(role.responsibilities), `${roleId} has responsibilities`)
+    assert.ok(Array.isArray(role.checklist), `${roleId} has checklist`)
+    assert.strictEqual(role.required, true, `${roleId} is required`)
+  }
+})
+
+// normalizeIncidentRole
+test('normalizeIncidentRole incidentCommander -> incident_commander', () => {
+  assert.strictEqual(normalizeIncidentRole('incidentCommander'), 'incident_commander')
+})
+test('normalizeIncidentRole operationsLead -> ops_lead', () => {
+  assert.strictEqual(normalizeIncidentRole('operationsLead'), 'ops_lead')
+})
+test('normalizeIncidentRole opsLead -> ops_lead', () => {
+  assert.strictEqual(normalizeIncidentRole('opsLead'), 'ops_lead')
+})
+test('normalizeIncidentRole communicationsLead -> communications_lead', () => {
+  assert.strictEqual(normalizeIncidentRole('communicationsLead'), 'communications_lead')
+})
+test('normalizeIncidentRole technicalLead -> technical_lead', () => {
+  assert.strictEqual(normalizeIncidentRole('technicalLead'), 'technical_lead')
+})
+test('normalizeIncidentRole snake_case stays snake_case', () => {
+  assert.strictEqual(normalizeIncidentRole('incident_commander'), 'incident_commander')
+  assert.strictEqual(normalizeIncidentRole('ops_lead'), 'ops_lead')
+})
+test('normalizeIncidentRole hyphenated -> snake_case', () => {
+  assert.strictEqual(normalizeIncidentRole('incident-commander'), 'incident_commander')
+  assert.strictEqual(normalizeIncidentRole('ops-lead'), 'ops_lead')
+})
+test('normalizeIncidentRole unknown returns null', () => {
+  assert.strictEqual(normalizeIncidentRole('unknown_role'), null)
+})
+test('normalizeIncidentRole null/empty returns null', () => {
+  assert.strictEqual(normalizeIncidentRole(null), null)
+  assert.strictEqual(normalizeIncidentRole(''), null)
+})
+
+// getIncidentRole
+test('getIncidentRole returns role definition', () => {
+  const role = getIncidentRole('incident_commander')
+  assert.strictEqual(role.id, 'incident_commander')
+  assert.strictEqual(role.name, 'Incident Commander')
+})
+test('getIncidentRole unknown returns null', () => {
+  assert.strictEqual(getIncidentRole('unknown'), null)
+})
+
+// getAllIncidentRoles
+test('getAllIncidentRoles returns all 5 roles', () => {
+  const roles = getAllIncidentRoles()
+  assert.strictEqual(Object.keys(roles).length, 5)
+})
+
+// createEmptyRoleAssignments
+test('createEmptyRoleAssignments returns all roles as null', () => {
+  const assignments = createEmptyRoleAssignments()
+  assert.strictEqual(assignments.incident_commander, null)
+  assert.strictEqual(assignments.ops_lead, null)
+  assert.strictEqual(assignments.communications_lead, null)
+  assert.strictEqual(assignments.scribe, null)
+  assert.strictEqual(assignments.technical_lead, null)
+})
+
+// createRoleAssignmentEvent
+test('createRoleAssignmentEvent creates valid event', () => {
+  const event = createRoleAssignmentEvent({
+    roleId: 'incident_commander',
+    assignee: 'alice',
+    handoffNote: 'Taking over from bob',
+    previousAssignee: 'bob'
+  })
+  assert.strictEqual(event.eventType, 'role-change')
+  assert.ok(event.message.includes('Incident Commander'))
+  assert.ok(event.message.includes('alice'))
+  assert.strictEqual(event.role.id, 'incident_commander')
+  assert.strictEqual(event.role.name, 'Incident Commander')
+  assert.strictEqual(event.role.assignee, 'alice')
+  assert.strictEqual(event.role.previousAssignee, 'bob')
+  assert.strictEqual(event.role.handoffNote, 'Taking over from bob')
+})
+test('createRoleAssignmentEvent unassign role', () => {
+  const event = createRoleAssignmentEvent({
+    roleId: 'ops_lead',
+    assignee: null,
+    handoffNote: 'Stepping down'
+  })
+  assert.strictEqual(event.role.assignee, null)
+  assert.ok(event.message.includes('Unassigned'))
+})
+test('createRoleAssignmentEvent unknown role throws', () => {
+  assert.throws(() => {
+    createRoleAssignmentEvent({ roleId: 'unknown_role', assignee: 'alice' })
+  }, /Unknown role/)
+})
+
+// deriveRoleAssignments
+test('deriveRoleAssignments applies role-change events in order', () => {
+  const timeline = [
+    { eventType: 'role-change', timestamp: '2026-07-06T00:01:00Z', id: 'e1', role: { id: 'incident_commander', assignee: 'alice' } },
+    { eventType: 'role-change', timestamp: '2026-07-06T00:02:00Z', id: 'e2', role: { id: 'ops_lead', assignee: 'bob' } },
+    { eventType: 'role-change', timestamp: '2026-07-06T00:03:00Z', id: 'e3', role: { id: 'incident_commander', assignee: 'charlie' } }
+  ]
+  const assignments = deriveRoleAssignments(timeline)
+  assert.strictEqual(assignments.incident_commander, 'charlie') // last write wins
+  assert.strictEqual(assignments.ops_lead, 'bob')
+  assert.strictEqual(assignments.communications_lead, null)
+  assert.strictEqual(assignments.scribe, null)
+  assert.strictEqual(assignments.technical_lead, null)
+})
+test('deriveRoleAssignments handles initialRoles parameter', () => {
+  const assignments = deriveRoleAssignments([], {
+    incidentCommander: 'alice',
+    communicationsLead: 'bob'
+  })
+  assert.strictEqual(assignments.incident_commander, 'alice')
+  assert.strictEqual(assignments.communications_lead, 'bob')
+  assert.strictEqual(assignments.ops_lead, null)
+  assert.strictEqual(assignments.scribe, null)
+  assert.strictEqual(assignments.technical_lead, null)
+})
+test('deriveRoleAssignments empty timeline and no initialRoles returns all null', () => {
+  const assignments = deriveRoleAssignments([])
+  assert.strictEqual(assignments.incident_commander, null)
+  assert.strictEqual(assignments.ops_lead, null)
+  assert.strictEqual(assignments.communications_lead, null)
+  assert.strictEqual(assignments.scribe, null)
+  assert.strictEqual(assignments.technical_lead, null)
+})
+test('deriveRoleAssignments conflict resolution: same timestamp uses event id', () => {
+  // Deterministic ordering when timestamps collide: event id breaks ties
+  const timeline = [
+    { eventType: 'role-change', timestamp: '2026-07-06T00:01:00Z', id: 'e2', role: { id: 'incident_commander', assignee: 'bob' } },
+    { eventType: 'role-change', timestamp: '2026-07-06T00:01:00Z', id: 'e1', role: { id: 'incident_commander', assignee: 'alice' } },
+    { eventType: 'role-change', timestamp: '2026-07-06T00:01:00Z', id: 'e3', role: { id: 'incident_commander', assignee: 'charlie' } }
+  ]
+  const assignments = deriveRoleAssignments(timeline)
+  // e3 > e2 > e1 lexicographically, so charlie wins (last after sort)
+  assert.strictEqual(assignments.incident_commander, 'charlie')
+})
+test('deriveRoleAssignments conflict resolution: same timestamp and id uses author', () => {
+  const timeline = [
+    { eventType: 'role-change', timestamp: '2026-07-06T00:01:00Z', id: 'e1', author: 'bob', role: { id: 'incident_commander', assignee: 'bob' } },
+    { eventType: 'role-change', timestamp: '2026-07-06T00:01:00Z', id: 'e1', author: 'alice', role: { id: 'incident_commander', assignee: 'alice' } },
+    { eventType: 'role-change', timestamp: '2026-07-06T00:01:00Z', id: 'e1', author: 'charlie', role: { id: 'incident_commander', assignee: 'charlie' } }
+  ]
+  const assignments = deriveRoleAssignments(timeline)
+  // charlie > bob > alice lexicographically, so charlie wins
+  assert.strictEqual(assignments.incident_commander, 'charlie')
+})
+
+// getMissingRequiredRoles
+test('getMissingRequiredRoles returns unassigned required roles', () => {
+  const assignments = {
+    incident_commander: 'alice',
+    ops_lead: null,
+    communications_lead: null,
+    scribe: 'bob',
+    technical_lead: null
+  }
+  const missing = getMissingRequiredRoles(assignments)
+  assert.deepEqual(missing.sort(), ['communications_lead', 'ops_lead', 'technical_lead'])
+})
+test('getMissingRequiredRoles all assigned returns empty', () => {
+  const assignments = {
+    incident_commander: 'alice',
+    ops_lead: 'bob',
+    communications_lead: 'carol',
+    scribe: 'dave',
+    technical_lead: 'eve'
+  }
+  const missing = getMissingRequiredRoles(assignments)
+  assert.deepEqual(missing, [])
 })
 
 // upsertIncident, removeIncident, findIncident (legacy tests)

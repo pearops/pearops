@@ -92,6 +92,101 @@ const VALID_TRANSITIONS = {
   'closed': ['declared'] // Reopen
 }
 
+// Canonical incident roles (event-sourced, P2P-synced)
+const INCIDENT_ROLES = {
+  incident_commander: {
+    id: 'incident_commander',
+    name: 'Incident Commander',
+    required: true,
+    responsibilities: [
+      'Own the incident response end-to-end',
+      'Make final decisions on mitigation strategy',
+      'Coordinate all responders and stakeholders',
+      'Ensure timeline is kept up to date',
+      'Declare incident resolved when appropriate'
+    ],
+    checklist: [
+      'Confirm incident severity and scope',
+      'Assign all required roles',
+      'Set up communication channel for stakeholders',
+      'Document key decisions in timeline',
+      'Schedule postmortem if SEV-0/SEV-1'
+    ]
+  },
+  ops_lead: {
+    id: 'ops_lead',
+    name: 'Ops Lead',
+    required: true,
+    responsibilities: [
+      'Lead technical troubleshooting and mitigation',
+      'Coordinate operational changes (deploys, rollbacks, config)',
+      'Manage runbook execution',
+      'Escalate to additional teams as needed'
+    ],
+    checklist: [
+      'Identify affected services and components',
+      'Review recent deploys and changes',
+      'Execute diagnostic commands and checks',
+      'Implement mitigation or rollback',
+      'Verify service recovery'
+    ]
+  },
+  communications_lead: {
+    id: 'communications_lead',
+    name: 'Communications Lead',
+    required: true,
+    responsibilities: [
+      'Manage all stakeholder communications',
+      'Draft and send status updates',
+      'Coordinate external communications if needed',
+      'Protect responders from interruptions'
+    ],
+    checklist: [
+      'Identify stakeholder groups (internal/external)',
+      'Send initial incident notification',
+      'Schedule regular update cadence',
+      'Prepare post-incident summary for leadership',
+      'Update status page if applicable'
+    ]
+  },
+  scribe: {
+    id: 'scribe',
+    name: 'Scribe',
+    required: true,
+    responsibilities: [
+      'Maintain the incident timeline',
+      'Document decisions, actions, and observations',
+      'Capture evidence and artifacts',
+      'Prepare postmortem draft from timeline'
+    ],
+    checklist: [
+      'Record all timeline events in real-time',
+      'Attach relevant logs/screenshots',
+      'Note hypotheses and their outcomes',
+      'Track action items as they arise',
+      'Export timeline for postmortem'
+    ]
+  },
+  technical_lead: {
+    id: 'technical_lead',
+    name: 'Technical Lead',
+    required: true,
+    responsibilities: [
+      'Provide deep technical expertise',
+      'Lead root cause analysis',
+      'Review and approve technical fixes',
+      'Guide long-term remediation efforts'
+    ],
+    checklist: [
+      'Analyze root cause in detail',
+      'Review proposed fixes for safety',
+      'Identify preventive measures',
+      'Document technical learnings',
+      'Plan follow-up technical debt work'
+    ]
+  }
+}
+
 function createIncidentId () {
   return `inc-${Date.now()}-${Math.random().toString(16).slice(2)}`
 }
@@ -160,6 +255,8 @@ function createIncidentDeclaration ({ title, description, severity, affectedServ
   const normalizedSeverity = normalizeSeverity(severity)
   const normalizedServices = normalizeAffectedServices(affectedServices)
 
+  const declaredByValue = declaredBy || null
+
   return {
     id: incidentId,
     title: title || 'Untitled incident',
@@ -169,10 +266,16 @@ function createIncidentDeclaration ({ title, description, severity, affectedServ
     state: 'declared',
     status: 'declared', // Keep status in sync for backward compatibility
     roles: {
-      incidentCommander: declaredBy || null,
-      communicationsLead: null,
+      // Canonical snake_case (source of truth)
+      incident_commander: declaredByValue,
+      ops_lead: null,
+      communications_lead: null,
+      scribe: null,
+      technical_lead: null,
+      // Legacy camelCase aliases for backward compatibility
+      incidentCommander: declaredByValue,
       operationsLead: null,
-      scribe: null
+      communicationsLead: null
     },
     artifacts: {
       timeline: `#${incidentId}-timeline`,
@@ -236,6 +339,115 @@ function getAllIncidentStates () {
   return INCIDENT_STATES
 }
 
+// Role helpers
+function normalizeIncidentRole (roleId) {
+  if (!roleId) return null
+  const normalized = String(roleId).trim().toLowerCase().replace(/-/g, '_')
+  // Legacy camelCase mappings
+  const legacy = {
+    incidentcommander: 'incident_commander',
+    incident_commander: 'incident_commander',
+    opslead: 'ops_lead',
+    operationslead: 'ops_lead',
+    ops_lead: 'ops_lead',
+    communicationslead: 'communications_lead',
+    communications_lead: 'communications_lead',
+    scribe: 'scribe',
+    technicallead: 'technical_lead',
+    technical_lead: 'technical_lead'
+  }
+  const compact = normalized.replace(/_/g, '')
+  return INCIDENT_ROLES[normalized] ? normalized : (legacy[compact] || legacy[normalized] || null)
+}
+
+function getIncidentRole (roleId) {
+  const normalized = normalizeIncidentRole(roleId)
+  return normalized ? INCIDENT_ROLES[normalized] : null
+}
+
+function getAllIncidentRoles () {
+  return INCIDENT_ROLES
+}
+
+function createEmptyRoleAssignments () {
+  const assignments = {}
+  for (const roleId of Object.keys(INCIDENT_ROLES)) {
+    assignments[roleId] = null
+  }
+  return assignments
+}
+
+function applyRoleEvent (assignments, event) {
+  const roleChange = event.role || event.details?.roleChange
+  if (!roleChange?.id) return assignments
+  const normalized = normalizeIncidentRole(roleChange.id)
+  if (!normalized) return assignments
+  assignments[normalized] = roleChange.assignee || null
+  return assignments
+}
+
+function compareTimelineEvents (a, b) {
+  // Primary: timestamp
+  const tsCmp = (a.timestamp || '').localeCompare(b.timestamp || '')
+  if (tsCmp !== 0) return tsCmp
+  // Secondary: event id
+  const idA = a.id || ''
+  const idB = b.id || ''
+  const idCmp = idA.localeCompare(idB)
+  if (idCmp !== 0) return idCmp
+  // Tertiary: author for stability
+  return (a.author || '').localeCompare(b.author || '')
+}
+
+function deriveRoleAssignments (timeline = [], initialRoles = {}) {
+  const assignments = createEmptyRoleAssignments()
+  // Apply initial roles first (from metadata.roles or peer.metadata)
+  if (initialRoles && typeof initialRoles === 'object') {
+    for (const [roleId, assignee] of Object.entries(initialRoles)) {
+      const normalized = normalizeIncidentRole(roleId)
+      if (normalized && assignee) {
+        assignments[normalized] = assignee
+      }
+    }
+  }
+  // Then apply role-change events from timeline (last write wins)
+  const roleEvents = timeline
+    .filter(e => e.eventType === 'role-change' || e.type === 'role-change')
+    .slice()
+    .sort(compareTimelineEvents)
+  for (const event of roleEvents) {
+    applyRoleEvent(assignments, event)
+  }
+  return assignments
+}
+
+function getMissingRequiredRoles (assignments) {
+  const missing = []
+  for (const [roleId, roleDef] of Object.entries(INCIDENT_ROLES)) {
+    if (roleDef.required && !assignments[roleId]) {
+      missing.push(roleId)
+    }
+  }
+  return missing
+}
+
+function createRoleAssignmentEvent ({ roleId, assignee, handoffNote, previousAssignee }) {
+  const normalized = normalizeIncidentRole(roleId)
+  if (!normalized) throw new Error(`Unknown role: ${roleId}`)
+  const roleDef = INCIDENT_ROLES[normalized]
+  return {
+    eventType: 'role-change',
+    message: `${roleDef.name} assigned to ${assignee || 'Unassigned'}${handoffNote ? ` — ${handoffNote}` : ''}`,
+    role: {
+      id: normalized,
+      name: roleDef.name,
+      assignee: assignee || null,
+      previousAssignee: previousAssignee || null,
+      handoffNote: handoffNote || null
+    }
+  }
+}
+
 module.exports = {
   createIncidentId,
   upsertIncident,
@@ -253,5 +465,15 @@ module.exports = {
   getAllIncidentStates,
   INCIDENT_STATES,
   SEVERITY_DEFINITIONS,
-  VALID_TRANSITIONS
+  VALID_TRANSITIONS,
+  INCIDENT_ROLES,
+  normalizeIncidentRole,
+  getIncidentRole,
+  getAllIncidentRoles,
+  createEmptyRoleAssignments,
+  applyRoleEvent,
+  compareTimelineEvents,
+  deriveRoleAssignments,
+  getMissingRequiredRoles,
+  createRoleAssignmentEvent
 }
