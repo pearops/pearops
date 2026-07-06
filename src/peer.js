@@ -9,7 +9,18 @@ const { createKeetIdentity, proofToJSON } = require('./identity')
 const { topicFromRoomKey, roomKeyFromTopic } = require('./p2p/room-key')
 const { parseBlindPeerKeys } = require('./p2p/blind-peers')
 const { jsonLineSocket } = require('./p2p/json-line-socket')
-const { createIncidentDeclaration, normalizeSeverity, normalizeLifecycleState, transitionIncidentState } = require('./app/incidents')
+const {
+  createIncidentDeclaration,
+  normalizeSeverity,
+  normalizeLifecycleState,
+  transitionIncidentState,
+  deriveRoleAssignments,
+  getMissingRequiredRoles,
+  getAllIncidentRoles,
+  createRoleAssignmentEvent,
+  normalizeIncidentRole,
+  compareTimelineEvents
+} = require('./app/incidents')
 
 class PearOpsPeer extends EventEmitter {
   constructor (opts = {}) {
@@ -161,10 +172,41 @@ class PearOpsPeer extends EventEmitter {
     return this._append({ type: 'status', eventType: 'state-transition', message: `State changed from ${previousState} to ${normalizedState}`, metadata: this.metadata })
   }
 
+  async assignRole ({ roleId, assignee, handoffNote }) {
+    if (!this.writer) throw new Error('join or create a room first')
+    const roles = deriveRoleAssignments(this.timeline(), this.metadata?.roles)
+    const normalized = normalizeIncidentRole(roleId)
+    if (!normalized) throw new Error(`Unknown role: ${roleId}`)
+    const previousAssignee = roles[normalized] || null
+    const normalizedAssignee = assignee ? String(assignee).trim() : null
+    const normalizedHandoffNote = handoffNote ? String(handoffNote).trim() : null
+    const roleEvent = createRoleAssignmentEvent({
+      roleId: normalized,
+      assignee: normalizedAssignee,
+      previousAssignee,
+      handoffNote: normalizedHandoffNote
+    })
+    await this._append({
+      eventType: 'role-change',
+      message: roleEvent.message,
+      role: roleEvent.role
+    })
+    return this.snapshot()
+  }
+
   async _append (partial) {
     const eventId = crypto.randomUUID()
     const timestamp = new Date().toISOString()
-    const signedPayload = { id: eventId, timestamp, eventType: partial.eventType || partial.type || 'update', message: partial.message || '', attachment: partial.attachment || null, metadata: partial.metadata || null }
+    // Build base payload for signing (backward compatible - role only when present)
+    const signedPayload = {
+      id: eventId,
+      timestamp,
+      eventType: partial.eventType || partial.type || 'update',
+      message: partial.message || '',
+      attachment: partial.attachment || null,
+      metadata: partial.metadata || null
+    }
+    if (partial.role) signedPayload.role = partial.role
     const proof = this.identityBundle ? proofToJSON(this.identityBundle.sign(signedPayload)) : null
     const event = {
       id: eventId,
@@ -174,6 +216,7 @@ class PearOpsPeer extends EventEmitter {
       message: partial.message || '',
       attachment: partial.attachment || null,
       metadata: partial.metadata || null,
+      role: partial.role || null,
       writerKey: b4a.toString(this.writer.key, 'hex'),
       identity: this.identityBundle ? {
         identityPublicKey: this.identityBundle.identityPublicKey,
@@ -266,8 +309,10 @@ class PearOpsPeer extends EventEmitter {
     this.events.set(event.id, event)
     if (event.metadata) this.metadata = { ...(this.metadata || {}), ...event.metadata }
     if (event.proof && event.identity?.identityPublicKey && this.identityBundle) {
-      const signedPayload = { id: event.id, timestamp: event.timestamp, eventType: event.eventType, message: event.message, attachment: event.attachment, metadata: event.metadata }
-      event.identity.verified = this.identityBundle.verify(event.proof, signedPayload, event.identity.identityPublicKey)
+      // Try new payload format first (with role), then fall back to legacy (without role)
+      const signedPayload = { id: event.id, timestamp: event.timestamp, eventType: event.eventType, message: event.message, attachment: event.attachment, metadata: event.metadata, role: event.role || null }
+      const legacyPayload = { id: event.id, timestamp: event.timestamp, eventType: event.eventType, message: event.message, attachment: event.attachment, metadata: event.metadata }
+      event.identity.verified = this.identityBundle.verify(event.proof, signedPayload, event.identity.identityPublicKey) || this.identityBundle.verify(event.proof, legacyPayload, event.identity.identityPublicKey)
     }
     if (event.attachment?.driveKey) this._addDrive(Buffer.from(event.attachment.driveKey, 'hex')).catch(() => {})
     this.emit('event', event)
@@ -324,13 +369,25 @@ class PearOpsPeer extends EventEmitter {
   }
 
   timeline () {
-    return [...this.events.values()].sort((a, b) => a.timestamp.localeCompare(b.timestamp))
+    return [...this.events.values()].sort(compareTimelineEvents)
   }
 
   snapshot () {
+    const timeline = this.timeline()
+    const roleDefinitions = getAllIncidentRoles()
+    const roles = deriveRoleAssignments(timeline, this.metadata?.roles)
+    const missingRequiredRoles = getMissingRequiredRoles(roles)
     return {
       roomKey: this.roomKey,
       metadata: this.metadata,
+      roles,
+      roleDefinitions,
+      missingRequiredRoles,
+      roleWarnings: missingRequiredRoles.map(roleId => ({
+        roleId,
+        name: roleDefinitions[roleId].name,
+        message: `${roleDefinitions[roleId].name} is not assigned`
+      })),
       peerName: this.name,
       identity: this.identityBundle ? { identityPublicKey: this.identityBundle.identityPublicKey, devicePublicKey: this.identityBundle.devicePublicKey } : null,
       peers: this.peerCount(),
@@ -343,7 +400,7 @@ class PearOpsPeer extends EventEmitter {
         registeredCores: this.blindRegistered.size,
         errors: this.blindRegistrationErrors
       },
-      timeline: this.timeline()
+      timeline
     }
   }
 

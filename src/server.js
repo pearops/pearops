@@ -171,6 +171,37 @@ async function main () {
     res.json(appState.incidents || [])
   })
 
+  // Get role definitions and current assignments
+  app.get('/api/roles', async (req, res, next) => {
+    try {
+      const snap = peer.snapshot()
+      res.json({
+        roleDefinitions: snap.roleDefinitions,
+        roles: snap.roles,
+        missingRequiredRoles: snap.missingRequiredRoles,
+        roleWarnings: snap.roleWarnings
+      })
+    } catch (err) { next(err) }
+  })
+
+  // Assign/unassign a role
+  app.post('/api/roles', async (req, res, next) => {
+    try {
+      const { roleId, assignee, handoffNote } = req.body || {}
+      if (!roleId) throw new Error('roleId is required')
+      const snap = await peer.assignRole({ roleId, assignee, handoffNote })
+      persistSnapshot(snap)
+      res.json({
+        ok: true,
+        roles: snap.roles,
+        roleDefinitions: snap.roleDefinitions,
+        missingRequiredRoles: snap.missingRequiredRoles,
+        roleWarnings: snap.roleWarnings,
+        event: snap.timeline[snap.timeline.length - 1]
+      })
+    } catch (err) { next(err) }
+  })
+
   // Restore active room on page load
   app.get('/api/restore', async (req, res, next) => {
     try {

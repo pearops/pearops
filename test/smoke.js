@@ -36,6 +36,27 @@ async function main () {
     await b.postEvent({ eventType: 'mitigation', message: 'B rolled back worker release' })
     await waitFor('A receives B event', () => a.timeline().find(e => e.message.includes('rolled back')))
 
+    // Test role assignment P2P replication
+    await a.assignRole({ roleId: 'incident_commander', assignee: 'Alice', handoffNote: 'Taking command' })
+    await waitFor('B derives Alice as incident_commander', () => {
+      const snap = b.snapshot()
+      return snap.roles && snap.roles.incident_commander === 'Alice'
+    })
+    const bRoleEvent = b.timeline().find(e => e.eventType === 'role-change' && e.role && e.role.id === 'incident_commander')
+    assert.ok(bRoleEvent, 'B has role-change event for incident_commander')
+    assert.strictEqual(bRoleEvent.role.assignee, 'Alice')
+    assert.strictEqual(bRoleEvent.role.handoffNote, 'Taking command')
+
+    // B assigns another role, verify A derives it
+    await b.assignRole({ roleId: 'ops_lead', assignee: 'Bob', handoffNote: 'Ops lead on duty' })
+    await waitFor('A derives Bob as ops_lead', () => {
+      const snap = a.snapshot()
+      return snap.roles && snap.roles.ops_lead === 'Bob'
+    })
+    const aRoleEvent = a.timeline().find(e => e.eventType === 'role-change' && e.role && e.role.id === 'ops_lead')
+    assert.ok(aRoleEvent, 'A has role-change event for ops_lead')
+    assert.strictEqual(aRoleEvent.role.assignee, 'Bob')
+
     const evidence = path.join(root, 'evidence.txt')
     fs.writeFileSync(evidence, 'log excerpt: checkout failed with ECONNRESET\n')
     const attachment = await a.attachFile(evidence)
@@ -45,7 +66,7 @@ async function main () {
     })
     assert.strictEqual(downloaded.toString(), fs.readFileSync(evidence, 'utf8'))
 
-    console.log(JSON.stringify({ ok: true, roomKey: room.roomKey, aEvents: a.timeline().length, bEvents: b.timeline().length, attachment: attachment.name }, null, 2))
+    console.log(JSON.stringify({ ok: true, roomKey: room.roomKey, aEvents: a.timeline().length, bEvents: b.timeline().length, attachment: attachment.name, rolesReplicated: true }, null, 2))
   } finally {
     await Promise.allSettled([a.close(), b.close()])
     fs.rmSync(root, { recursive: true, force: true })

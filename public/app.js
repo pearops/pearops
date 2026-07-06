@@ -78,6 +78,8 @@ document.querySelectorAll('[data-state]').forEach(btn => {
 // Fetch lifecycle config once and disable invalid transitions
 let lifecycleConfig = null
 let severityDefinitions = null
+let roleDefinitions = null
+
 function loadLifecycleConfig () {
   if (lifecycleConfig) return
   fetch('/api/lifecycle').then(r => r.json()).then(config => {
@@ -85,6 +87,7 @@ function loadLifecycleConfig () {
     updateStateButtons(state.snapshot?.metadata?.state || state.snapshot?.metadata?.status || 'declared')
   }).catch(() => {})
 }
+
 function loadSeverityDefinitions () {
   if (severityDefinitions) return
   fetch('/api/severities').then(r => r.json()).then(defs => {
@@ -93,6 +96,16 @@ function loadSeverityDefinitions () {
     renderArtifactSections(state.snapshot?.metadata?.artifacts || {})
   }).catch(() => {})
 }
+
+function loadRoleDefinitions () {
+  if (roleDefinitions) return
+  fetch('/api/roles').then(r => r.json()).then(data => {
+    roleDefinitions = data.roleDefinitions
+    renderRoleWarnings(state.snapshot)
+    renderRoleBoard(state.snapshot)
+  }).catch(() => {})
+}
+
 function updateStateButtons (currentState) {
   if (!lifecycleConfig) return
   const allowed = lifecycleConfig.transitions[currentState] || []
@@ -103,6 +116,7 @@ function updateStateButtons (currentState) {
     btn.style.cursor = allowed.includes(state) ? 'pointer' : 'not-allowed'
   })
 }
+
 function renderSeverityDefinitions () {
   if (!severityDefinitions) return
   const defs = Object.values(severityDefinitions).sort((a, b) => a.level - b.level)
@@ -110,8 +124,8 @@ function renderSeverityDefinitions () {
   const container = $('#severityDefinitions')
   if (container) container.innerHTML = `<div class="severity-definitions">${html}</div>`
 }
-function renderArtifactSections (artifacts) {
-  // MVP placeholder sections - visible but empty, ready for phase 2 implementation
+
+function renderArtifactSections () {
   const sections = [
     { id: 'notes', title: 'Incident Notes', desc: 'Collaborative notes during incident response' },
     { id: 'actions', title: 'Action Items', desc: 'Follow-up tasks and owners' },
@@ -121,11 +135,111 @@ function renderArtifactSections (artifacts) {
   const container = $('#artifactSections')
   if (container) container.innerHTML = html
 }
+
 function safeColor (value) {
   return /^#[0-9a-fA-F]{3,8}$/.test(String(value || '')) ? value : '#626a76'
 }
+
+function renderRoleWarnings (snap) {
+  const container = $('#roleWarnings')
+  if (!container) return
+  const warnings = snap?.roleWarnings || []
+  if (!warnings.length) {
+    container.classList.add('hidden')
+    container.innerHTML = ''
+    return
+  }
+  container.classList.remove('hidden')
+  const html = warnings.map(w => `<div class="role-warning"><span class="role-warning-icon">⚠</span><span>${escapeHtml(w.message)}</span></div>`).join('')
+  container.innerHTML = `<div class="role-warnings-inner">${html}</div>`
+}
+
+function renderRoleBoard (snap) {
+  const container = $('#roleBoard')
+  if (!container) return
+  const defs = snap?.roleDefinitions || roleDefinitions || {}
+  const roles = snap?.roles || {}
+  const ids = Object.keys(defs)
+  if (!ids.length) {
+    container.innerHTML = ''
+    return
+  }
+  container.innerHTML = `
+    <div class="role-board-head">
+      <div>
+        <p class="eyebrow">Incident roles</p>
+        <h2>Current ownership</h2>
+      </div>
+    </div>
+    <div class="role-grid">
+      ${ids.map(roleId => renderRoleCard(roleId, defs[roleId], roles[roleId])).join('')}
+    </div>
+  `
+  container.querySelectorAll('[data-role-assign]').forEach(btn => {
+    btn.addEventListener('click', () => assignRole(btn.dataset.roleAssign))
+  })
+  container.querySelectorAll('[data-role-unassign]').forEach(btn => {
+    btn.addEventListener('click', () => assignRole(btn.dataset.roleUnassign, true))
+  })
+}
+
+function renderRoleCard (roleId, def, assignee) {
+  const isAssigned = !!assignee
+  const responsibilities = (def.responsibilities || []).map(r => `<li>${escapeHtml(r)}</li>`).join('')
+  const checklist = (def.checklist || []).map(c => `<li><input type="checkbox" disabled> ${escapeHtml(c)}</li>`).join('')
+  return `
+    <div class="role-card ${isAssigned ? 'assigned' : 'unassigned'}" data-role="${escapeHtml(roleId)}">
+      <div class="role-card-header">
+        <h3 class="role-card-title">${escapeHtml(def.name)}</h3>
+        ${def.required ? '<span class="role-required-badge">Required</span>' : ''}
+      </div>
+      <div class="role-owner">
+        <span class="role-owner-label">Assignee:</span>
+        <span class="role-owner-value">${isAssigned ? escapeHtml(assignee) : '<em>Unassigned</em>'}</span>
+      </div>
+      <div class="role-assign-input">
+        <label>Assignee name
+          <input type="text" data-role-assignee="${escapeHtml(roleId)}" value="${isAssigned ? escapeHtml(assignee) : ''}" placeholder="Enter name">
+        </label>
+        <label>Handoff note
+          <input type="text" data-role-note="${escapeHtml(roleId)}" placeholder="Optional note for audit trail">
+        </label>
+        <div class="role-actions">
+          <button class="btn btn-primary" data-role-assign="${escapeHtml(roleId)}" type="button">${isAssigned ? 'Update' : 'Assign'}</button>
+          ${isAssigned ? `<button class="btn btn-ghost" data-role-unassign="${escapeHtml(roleId)}" type="button">Unassign</button>` : ''}
+        </div>
+      </div>
+      <div class="role-details">
+        <div class="role-responsibilities">
+          <h4>Responsibilities</h4>
+          <ul>${responsibilities}</ul>
+        </div>
+        <div class="role-checklist">
+          <h4>Checklist</h4>
+          <ul>${checklist}</ul>
+        </div>
+      </div>
+    </div>
+  `
+}
+
+async function assignRole (roleId, unassign = false) {
+  await safe('Role update failed', async () => {
+    const assigneeEl = document.querySelector(`[data-role-assignee="${roleId}"]`)
+    const noteEl = document.querySelector(`[data-role-note="${roleId}"]`)
+    const assignee = unassign ? '' : (assigneeEl?.value?.trim() || '')
+    const handoffNote = noteEl?.value?.trim() || ''
+    if (!unassign && !assignee) return toast('Enter an assignee first')
+    await postJSON('/api/roles', { roleId, assignee: unassign ? null : assignee, handoffNote })
+    const snap = await fetch('/api/state').then(r => r.json())
+    render(snap)
+    toast(unassign ? 'Role unassigned' : 'Role assigned')
+  })
+}
+
 loadLifecycleConfig()
 loadSeverityDefinitions()
+loadRoleDefinitions()
 
 $('#copyKey').addEventListener('click', () => safe('Copy failed', async () => {
   if (!state.snapshot?.roomKey) return toast('No room key yet')
@@ -163,13 +277,9 @@ function render (snap) {
   $('#eventCount').textContent = `${timeline.length} event${timeline.length === 1 ? '' : 's'}`
   $('#timeline').innerHTML = timeline.map(renderEvent).join('') || '<li class="empty">No events yet. Post the first update.</li>'
 
-  // Update state buttons based on current lifecycle state
   updateStateButtons(meta.state || meta.status || 'declared')
-
-  // Render severity definitions (visible and configurable)
   renderSeverityDefinitions()
 
-  // Render incident metadata (description, affected services, created)
   const metaLines = []
   if (meta.description) metaLines.push(`<div class="meta-item"><strong>Description:</strong> ${escapeHtml(meta.description)}</div>`)
   if (meta.affectedServices && meta.affectedServices.length) {
@@ -179,13 +289,14 @@ function render (snap) {
   if (meta.declaredBy) metaLines.push(`<div class="meta-item"><strong>Declared by:</strong> ${escapeHtml(meta.declaredBy)}</div>`)
   $('#incident-meta').innerHTML = metaLines.join('') || ''
 
-  // Render roles (all slots visible, unassigned shown)
-  const roles = meta.roles || {}
+  // Legacy role badges (compact view) - kept for backward compat
+  const roles = snap.roles || meta.roles || {}
   const roleSlots = [
-    ['incidentCommander', 'Commander'],
-    ['communicationsLead', 'Comms'],
-    ['operationsLead', 'Ops'],
-    ['scribe', 'Scribe']
+    ['incident_commander', 'Commander'],
+    ['communications_lead', 'Comms'],
+    ['ops_lead', 'Ops'],
+    ['scribe', 'Scribe'],
+    ['technical_lead', 'Tech']
   ]
   const roleLines = roleSlots.map(([key, label]) => {
     const value = roles[key]
@@ -193,7 +304,6 @@ function render (snap) {
   })
   $('#incident-roles').innerHTML = roleLines.join('') || ''
 
-  // Render artifacts links (placeholder structure for MVP - actual artifact storage/content in phase 2)
   const artifacts = meta.artifacts || {}
   const artifactLinks = []
   if (artifacts.timeline) artifactLinks.push(`<a href="#timeline">Timeline</a>`)
@@ -202,10 +312,9 @@ function render (snap) {
   if (artifacts.statusUpdates) artifactLinks.push(`<a href="#updates" title="Updates artifact ID: ${escapeHtml(artifacts.statusUpdates)}">Updates</a>`)
   $('#incident-artifacts').innerHTML = artifactLinks.length ? `<div class="artifact-links">${artifactLinks.join(' · ')}</div>` : ''
 
-  // Render artifact sections (MVP placeholders - visible but empty, ready for phase 2)
   renderArtifactSections(artifacts)
-
-  // Render incident metadata (description, affected services, created)
+  renderRoleWarnings(snap)
+  renderRoleBoard(snap)
 }
 
 function renderEvent (e) {
